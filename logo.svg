@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- Outer circle -->
+  <circle cx="100" cy="100" r="90" fill="none" stroke="#333" stroke-width="8"/>
+  <!-- Inner circle -->
+  <circle cx="100" cy="100" r="72" fill="none" stroke="#333" stroke-width="5"/>
+
+  <!-- M letter -->
+  <text x="62" y="105" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="56" fill="#333">M</text>
+
+  <!-- Down arrow -->
+  <g transform="translate(118, 72)">
+    <line x1="12" y1="0" x2="12" y2="24" stroke="#333" stroke-width="6" stroke-linecap="round"/>
+    <polyline points="2,16 12,28 22,16" fill="none" stroke="#333" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Z letter -->
+  <text x="82" y="142" font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="36" fill="#333">Z</text>
+
+  <!-- Bottom swoosh / curved wave -->
+  <path d="M 50 140 Q 75 158, 100 145 Q 125 132, 150 148" fill="none" stroke="#333" stroke-width="5" stroke-linecap="round"/>
+</svg>

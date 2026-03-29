@@ -1,6 +1,9 @@
 import { editorLinkStyles, editorLinkScript } from './editor-link.ts';
 import { themeStyles, themeInitScript, themeToggleButtons, themeToggleStyles, themeScript } from './theme.ts';
 
+const faviconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="90" fill="none" stroke="%23333" stroke-width="8"/><circle cx="100" cy="100" r="72" fill="none" stroke="%23333" stroke-width="5"/><text x="62" y="105" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="56" fill="%23333">M</text><g transform="translate(118,72)"><line x1="12" y1="0" x2="12" y2="24" stroke="%23333" stroke-width="6" stroke-linecap="round"/><polyline points="2,16 12,28 22,16" fill="none" stroke="%23333" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></g><text x="82" y="142" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="36" fill="%23333">Z</text><path d="M50 140Q75 158 100 145Q125 132 150 148" fill="none" stroke="%23333" stroke-width="5" stroke-linecap="round"/></svg>`;
+const faviconLink = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${faviconSvg}">`;
+
 export const hljsStyles = `
 /* highlight.js theme — uses CSS variables for dark/light */
 pre code.hljs{display:block;overflow-x:auto;padding:1em}code.hljs{padding:3px 5px}
@@ -216,6 +219,7 @@ export function getHtmlTemplate(title: string, content: string): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title}</title>
+  ${faviconLink}
   ${themeInitScript}
   <style>
     ${themeStyles}
@@ -380,6 +384,7 @@ export function getPreviewTemplate(
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title}</title>
+  ${faviconLink}
   ${themeInitScript}
   <style>
     ${themeStyles}

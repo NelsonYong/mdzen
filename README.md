@@ -1,4 +1,8 @@
-# mdzen
+<p align="center">
+  <img src="./logo.svg" width="120" alt="mdzen logo">
+</p>
+
+<h1 align="center">mdzen</h1>
 
 本地 Markdown 预览服务器，支持热更新（HMR）、目录导航、代码高亮和 Admonition 语法块。
 
