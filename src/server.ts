@@ -6,7 +6,7 @@ import { PORT, DOC_ROOT, SUPPORTED_EXTENSIONS, MIME_TYPES, registerInstance, unr
 import { serveStaticFile } from './files.ts';
 import { getMarkdownWithToc, renderToc, renderFrontmatter } from './markdown.ts';
 import { renderIndex, renderMarkdown } from './pages.ts';
-import { getHtmlTemplate } from './templates.ts';
+import { getHtmlTemplate, logoSvgFileContent } from './templates.ts';
 import { handleSSE, closeAllClients } from './sse.ts';
 import { watchMdFiles } from './watcher.ts';
 
@@ -37,6 +37,13 @@ const server = createServer((req, res) => {
       res.statusCode = 404;
       res.end(JSON.stringify({ error: 'File not found' }));
     }
+    return;
+  }
+
+  if (url === '/logo.svg') {
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.end(logoSvgFileContent);
     return;
   }
 

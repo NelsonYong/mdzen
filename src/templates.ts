@@ -1,8 +1,39 @@
 import { editorLinkStyles, editorLinkScript } from './editor-link.ts';
 import { themeStyles, themeInitScript, themeToggleButtons, themeToggleStyles, themeScript } from './theme.ts';
 
-const faviconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle cx="100" cy="100" r="90" fill="none" stroke="%23333" stroke-width="8"/><circle cx="100" cy="100" r="72" fill="none" stroke="%23333" stroke-width="5"/><text x="62" y="105" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="56" fill="%23333">M</text><g transform="translate(118,72)"><line x1="12" y1="0" x2="12" y2="24" stroke="%23333" stroke-width="6" stroke-linecap="round"/><polyline points="2,16 12,28 22,16" fill="none" stroke="%23333" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></g><text x="82" y="142" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="36" fill="%23333">Z</text><path d="M50 140Q75 158 100 145Q125 132 150 148" fill="none" stroke="%23333" stroke-width="5" stroke-linecap="round"/></svg>`;
-const faviconLink = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${faviconSvg}">`;
+/** Served at GET /logo.svg — supports light/dark via CSS media query inside SVG */
+export const logoSvgFileContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <style>
+    :root { --c: #444; }
+    @media (prefers-color-scheme: dark) { :root { --c: #ccc; } }
+    .s { stroke: var(--c); fill: none; }
+    .f { fill: var(--c); }
+  </style>
+  <circle class="s" cx="100" cy="100" r="90" stroke-width="8"/>
+  <circle class="s" cx="100" cy="100" r="72" stroke-width="5"/>
+  <text class="f" x="62" y="105" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="56">M</text>
+  <g transform="translate(118,72)">
+    <line class="s" x1="12" y1="0" x2="12" y2="24" stroke-width="6" stroke-linecap="round"/>
+    <polyline class="s" points="2,16 12,28 22,16" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text class="f" x="82" y="142" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="36">Z</text>
+  <path class="s" d="M50 140Q75 158 100 145Q125 132 150 148" stroke-width="5" stroke-linecap="round"/>
+</svg>`;
+
+/** Inline SVG for the index page nav header — uses currentColor to follow CSS theme */
+export const logoSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="40" height="40" aria-hidden="true">
+  <circle cx="100" cy="100" r="90" fill="none" stroke="currentColor" stroke-width="8"/>
+  <circle cx="100" cy="100" r="72" fill="none" stroke="currentColor" stroke-width="5"/>
+  <text x="62" y="105" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="56" fill="currentColor">M</text>
+  <g transform="translate(118,72)">
+    <line x1="12" y1="0" x2="12" y2="24" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+    <polyline points="2,16 12,28 22,16" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="82" y="142" font-family="Arial,Helvetica,sans-serif" font-weight="bold" font-size="36" fill="currentColor">Z</text>
+  <path d="M50 140Q75 158 100 145Q125 132 150 148" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+</svg>`;
+
+const faviconLink = `<link rel="icon" type="image/svg+xml" href="/logo.svg">`;
 
 export const hljsStyles = `
 /* highlight.js theme — uses CSS variables for dark/light */
@@ -243,7 +274,9 @@ export function getHtmlTemplate(title: string, content: string): string {
       box-shadow: var(--shadow);
       margin-bottom: 20px;
     }
-    .nav h1 { font-size: 1.5rem; margin-bottom: 8px; color: var(--text-primary); }
+    .nav-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    .nav-logo svg { color: var(--text-primary); flex-shrink: 0; }
+    .nav h1 { font-size: 1.5rem; margin: 0; color: var(--text-primary); }
     .nav .file-count { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 20px; }
     .nav ul { list-style: none; }
     .nav li { margin: 4px 0; }

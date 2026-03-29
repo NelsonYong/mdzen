@@ -3,7 +3,7 @@ import { dirname, basename, extname } from 'node:path';
 import { SUPPORTED_EXTENSIONS } from './config.ts';
 import { getMdFiles, buildFileTree, renderTree, serveStaticFile } from './files.ts';
 import { getMarkdownWithToc, renderToc, renderFrontmatter } from './markdown.ts';
-import { getHtmlTemplate, getPreviewTemplate } from './templates.ts';
+import { getHtmlTemplate, getPreviewTemplate, logoSvg } from './templates.ts';
 
 const treeScript = `
 <script>
@@ -86,7 +86,10 @@ export function renderIndex(): string {
     `
     <div class="nav">
       <div class="nav-header">
-        <h1>Markdown 预览器</h1>
+        <div class="nav-logo">
+          ${logoSvg}
+          <h1>Markdown 预览器</h1>
+        </div>
         <p class="file-count">共 ${files.length} 个文件</p>
       </div>
       <div class="tree-actions">
