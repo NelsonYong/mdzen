@@ -1,9 +1,18 @@
-import { dirname, basename, extname } from 'node:path';
+import { dirname, basename, extname } from "node:path";
 
-import { SUPPORTED_EXTENSIONS } from './config.ts';
-import { getMdFiles, buildFileTree, renderTree, serveStaticFile } from './files.ts';
-import { getMarkdownWithToc, renderToc, renderFrontmatter } from './markdown.ts';
-import { getHtmlTemplate, getPreviewTemplate, logoSvg } from './templates.ts';
+import { SUPPORTED_EXTENSIONS } from "./config.ts";
+import {
+  getMdFiles,
+  buildFileTree,
+  renderTree,
+  serveStaticFile,
+} from "./files.ts";
+import {
+  getMarkdownWithToc,
+  renderToc,
+  renderFrontmatter,
+} from "./markdown.ts";
+import { getHtmlTemplate, getPreviewTemplate, logoSvg } from "./templates.ts";
 
 const treeScript = `
 <script>
@@ -82,13 +91,13 @@ export function renderIndex(): string {
   const tree = buildFileTree(files);
 
   return getHtmlTemplate(
-    'Markdown 预览',
+    "MD Zen",
     `
     <div class="nav">
       <div class="nav-header">
         <div class="nav-logo">
           ${logoSvg}
-          <h1>Markdown 预览器</h1>
+          <h1>MD Zen</h1>
         </div>
         <p class="file-count">共 ${files.length} 个文件</p>
       </div>
@@ -108,12 +117,16 @@ export function renderIndex(): string {
 export function renderMarkdown(filename: string): string {
   const result = getMarkdownWithToc(filename);
   if (!result) {
-    return getHtmlTemplate('404', '<div class="content"><h1>文件不存在</h1></div>');
+    return getHtmlTemplate(
+      "404",
+      '<div class="content"><h1>文件不存在</h1></div>',
+    );
   }
 
   const { html, toc, frontmatter, filePath } = result;
   const dir = dirname(filename);
-  const breadcrumb = dir !== '.' ? `<span class="breadcrumb">${dir}/</span>` : '';
+  const breadcrumb =
+    dir !== "." ? `<span class="breadcrumb">${dir}/</span>` : "";
   const allFiles = getMdFiles();
 
   return getPreviewTemplate(

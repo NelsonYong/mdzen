@@ -434,7 +434,7 @@ export function getPreviewTemplate(
     }
     .page-layout { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
     .main-content { width: 100%; }
-    .sidebar { position: fixed; right: 0; top: 40px; z-index: 50; }
+    .sidebar { position: fixed; right: 0; top: 70px; z-index: 50; }
     .toc-container {
       background: var(--bg-sidebar);
       border-radius: 16px 0 0 16px;
@@ -473,10 +473,12 @@ export function getPreviewTemplate(
       display: block;
       color: var(--text-secondary);
       text-decoration: none;
-      padding: 8px 12px;
+      padding: 6px 12px;
+      margin: 2px 4px;
+      border-radius: 6px;
       font-size: 13px;
       line-height: 1.4;
-      border-left: 2px solid var(--border-color);
+      border-left: 2px solid transparent;
       transition: all 0.15s ease;
       white-space: nowrap;
     }
@@ -522,7 +524,7 @@ export function getPreviewTemplate(
     .fm-bool { display: inline-block; padding: 2px 10px; border-radius: 4px; font-weight: 500; font-size: 11px; }
     .fm-true { background: #dcfce7; color: #166534; }
     .fm-false { background: #fee2e2; color: #991b1b; }
-    .left-nav { position: fixed; left: 0; top: 40px; z-index: 50; }
+    .left-nav { position: fixed; left: 0; top: 70px; z-index: 50; }
     .left-nav-container {
       background: var(--bg-sidebar);
       border-radius: 0 16px 16px 0;
@@ -533,21 +535,49 @@ export function getPreviewTemplate(
       transition: all 0.25s ease;
     }
     .left-nav:hover .left-nav-container { width: 260px; padding: 16px; border-radius: 16px; left: 10px; }
-    .back-link {
+    .nav-hint {
       display: flex;
       align-items: center;
-      color: var(--link-color);
-      text-decoration: none;
-      font-size: 14px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid var(--border-color);
-      margin-bottom: 12px;
-      white-space: nowrap;
-      overflow: hidden;
+      justify-content: center;
+      color: var(--text-secondary);
+      font-size: 18px;
+      margin: 0 auto 6px;
+      flex-shrink: 0;
+      transition: opacity 0.2s ease;
+      user-select: none;
     }
-    .back-link-text { opacity: 0; transition: opacity 0.2s ease; margin-left: 6px; }
-    .left-nav:hover .back-link-text { opacity: 1; }
-    .back-link:hover { text-decoration: underline; }
+    .left-nav:hover .nav-hint { opacity: 0; pointer-events: none; }
+    .nav-breadcrumb {
+      display: flex;
+      align-items: center;
+      flex-wrap: nowrap;
+      gap: 2px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border-color);
+      margin-bottom: 10px;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      overflow: hidden;
+      min-height: 28px;
+    }
+    .left-nav:hover .nav-breadcrumb { opacity: 1; }
+    .nav-bc-item {
+      font-size: 12px;
+      white-space: nowrap;
+      color: var(--text-secondary);
+      border: none;
+      background: none;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 4px;
+      text-decoration: none;
+      line-height: 1.4;
+      flex-shrink: 0;
+    }
+    .nav-bc-item:hover { color: var(--link-color); background: var(--link-hover-bg); }
+    .nav-bc-current { color: var(--text-primary) !important; font-weight: 600; cursor: default; }
+    .nav-bc-current:hover { background: none !important; }
+    .nav-bc-sep { color: var(--text-tertiary); font-size: 12px; flex-shrink: 0; padding: 0 1px; }
     .file-path {
       font-size: 13px;
       color: var(--text-primary);
@@ -558,14 +588,14 @@ export function getPreviewTemplate(
       overflow: hidden;
       text-overflow: ellipsis;
       transition: opacity 0.2s ease;
+      margin-bottom: 4px;
     }
     .left-nav:hover .file-path { opacity: 1; }
-    .breadcrumb { color: var(--text-tertiary); font-weight: normal; display: block; margin-bottom: 4px; font-size: 12px; }
     .file-nav {
       opacity: 0;
       transition: opacity 0.2s ease;
-      margin-top: 12px;
-      padding-top: 12px;
+      margin-top: 10px;
+      padding-top: 10px;
       border-top: 1px solid var(--border-color);
       max-height: 60vh;
       overflow-y: auto;
@@ -575,24 +605,6 @@ export function getPreviewTemplate(
     .file-nav::-webkit-scrollbar { width: 3px; }
     .file-nav::-webkit-scrollbar-track { background: transparent; }
     .file-nav::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 3px; }
-    .nav-back-btn {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      color: var(--text-secondary);
-      font-size: 12px;
-      padding: 4px 6px;
-      margin-bottom: 4px;
-      border-radius: 4px;
-      cursor: pointer;
-      border: none;
-      background: none;
-      width: 100%;
-      text-align: left;
-      white-space: nowrap;
-    }
-    .nav-back-btn:hover { color: var(--link-color); background: var(--link-hover-bg); }
-    .nav-back-btn svg { flex-shrink: 0; }
     .nav-item {
       display: flex;
       align-items: center;
@@ -610,6 +622,7 @@ export function getPreviewTemplate(
       background: none;
       width: 100%;
       text-align: left;
+      margin-bottom: 2px;
     }
     .nav-item:hover { background: var(--link-hover-bg); color: var(--link-color); }
     .nav-item.active { background: var(--link-active-bg); color: var(--link-color); font-weight: 500; }
@@ -622,8 +635,9 @@ export function getPreviewTemplate(
 <body>
   <aside class="left-nav">
     <div class="left-nav-container">
-      <a href="/" class="back-link">←<span class="back-link-text">返回列表</span></a>
-      <div class="file-path">${navInfo.breadcrumb}${navInfo.filename}</div>
+      <div class="nav-hint">←</div>
+      <nav class="nav-breadcrumb" id="nav-breadcrumb"></nav>
+      <div class="file-path">${navInfo.filename}</div>
       <div class="file-nav" id="file-nav"></div>
     </div>
   </aside>
@@ -680,16 +694,28 @@ export function getPreviewTemplate(
       return { folders: sortedFolders, files: files };
     }
 
+    function renderBreadcrumb(dir) {
+      var bc = document.getElementById('nav-breadcrumb');
+      if (!bc) return;
+      var parts = dir ? dir.split('/') : [];
+      var html = '<a href="/" class="nav-bc-item">首页</a>';
+      for (var i = 0; i < parts.length; i++) {
+        var segDir = parts.slice(0, i + 1).join('/');
+        var isLast = i === parts.length - 1;
+        html += '<span class="nav-bc-sep">/</span>';
+        if (isLast) {
+          html += '<span class="nav-bc-item nav-bc-current">' + parts[i] + '</span>';
+        } else {
+          html += '<button class="nav-bc-item" data-dir="' + segDir + '">' + parts[i] + '</button>';
+        }
+      }
+      bc.innerHTML = html;
+    }
+
     function render(dir) {
+      renderBreadcrumb(dir);
       var entries = getEntries(dir);
       var html = '';
-
-      if (dir) {
-        var parent = dir.lastIndexOf('/') > -1 ? dir.substring(0, dir.lastIndexOf('/')) : '';
-        html += '<button class="nav-back-btn" data-dir="' + parent + '">'
-          + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>'
-          + '返回上一级</button>';
-      }
 
       for (var i = 0; i < entries.folders.length; i++) {
         var folder = entries.folders[i];
@@ -710,7 +736,7 @@ export function getPreviewTemplate(
       nav.innerHTML = html;
     }
 
-    nav.addEventListener('click', function(e) {
+    document.querySelector('.left-nav-container').addEventListener('click', function(e) {
       var btn = e.target.closest('[data-dir]');
       if (btn) {
         e.preventDefault();

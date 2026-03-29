@@ -1,6 +1,6 @@
 {
   "name": "mdzen",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Fast local Markdown preview server with hot reload",
   "type": "module",
   "main": "dist/server.js",
