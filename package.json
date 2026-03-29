@@ -1,5 +1,5 @@
 {
-  "name": "mdpeek",
+  "name": "mdzen",
   "version": "1.0.0",
   "description": "Fast local Markdown preview server with hot reload",
   "type": "module",
@@ -12,7 +12,7 @@
     }
   },
   "bin": {
-    "mdpeek": "dist/server.js"
+    "mdzen": "dist/server.js"
   },
   "files": [
     "dist"
