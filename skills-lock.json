@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "skills": {
+    "documentation": {
+      "source": "mcollina/skills",
+      "sourceType": "github",
+      "computedHash": "89d6508c850e82c479420ae3a873cf5141453f6c2661cca9f888e91f64f3583f"
+    },
+    "node-best-practices": {
+      "source": "mcollina/skills",
+      "sourceType": "github",
+      "computedHash": "8a76a4035d9407bab1ef2450dab52082045dce1f3a75f3bc341b3eab526d89d8"
+    },
+    "nodejs-core": {
+      "source": "mcollina/skills",
+      "sourceType": "github",
+      "computedHash": "6dc34fb3b062a6133d5addac186f62e558f76bc7cf10974b3f8a69b56097b0ec"
+    },
+    "typescript-magician": {
+      "source": "mcollina/skills",
+      "sourceType": "github",
+      "computedHash": "c2bdad6211d1b158617e2deef5616c98496a20a9f0da60a254215bf2cb3f0146"
+    }
+  }
+}
