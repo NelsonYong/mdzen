@@ -23,6 +23,13 @@ export function notifyClients(type: NotifyType, data: Record<string, string> = {
   console.log(`${logMessages[type] ?? type}，已通知 ${sseClients.size} 个客户端`);
 }
 
+export function closeAllClients(): void {
+  for (const [, client] of sseClients) {
+    try { client.end(); } catch { /* ignore */ }
+  }
+  sseClients.clear();
+}
+
 export function handleSSE(req: IncomingMessage, res: ServerResponse, clientId: string): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',

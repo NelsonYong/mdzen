@@ -57,12 +57,12 @@ export const hmrScript = `
 <script>
   (function() {
     function getCurrentFile() {
-      const match = location.pathname.match(/^\\/view\\/(.+)$/);
+      var match = location.pathname.match(/^\\/view\\/(.+)$/);
       return match ? decodeURIComponent(match[1]) : null;
     }
 
     function getClientId() {
-      let clientId = sessionStorage.getItem('hmr-client-id');
+      var clientId = sessionStorage.getItem('hmr-client-id');
       if (!clientId) {
         clientId = 'client-' + Math.random().toString(36).substr(2, 9) + '-' + Date.now();
         sessionStorage.setItem('hmr-client-id', clientId);
@@ -70,61 +70,87 @@ export const hmrScript = `
       return clientId;
     }
 
-    const clientId = getClientId();
-    console.log('[HMR] 客户端ID:', clientId.slice(0, 16) + '...');
-    const evtSource = new EventSource('/sse?clientId=' + encodeURIComponent(clientId));
+    var clientId = getClientId();
+    var hasConnectedBefore = false;
+    var debounceTimer = null;
 
-    evtSource.onopen = function() {
-      updateBadge('connected');
-    };
+    function connectSSE() {
+      var evtSource = new EventSource('/sse?clientId=' + encodeURIComponent(clientId));
 
-    evtSource.onmessage = function(event) {
-      const data = JSON.parse(event.data);
+      evtSource.onopen = function() {
+        updateBadge('connected');
+        if (hasConnectedBefore) refreshContent();
+        hasConnectedBefore = true;
+      };
 
-      if (data.type === 'reload') {
-        if (!getCurrentFile()) {
-          console.log('[HMR] 文件结构变化，刷新目录...');
-          location.reload();
+      evtSource.onmessage = function(event) {
+        var data = JSON.parse(event.data);
+
+        if (data.type === 'connected') return;
+
+        if (data.type === 'reload') {
+          if (!getCurrentFile()) {
+            location.reload();
+          }
+          return;
         }
-        return;
-      }
 
-      if (data.type === 'update') {
-        const currentFile = getCurrentFile();
-        if (currentFile === data.file) {
-          updateBadge('updating');
-          fetch('/api/content/' + encodeURIComponent(data.file))
-            .then(res => res.json())
-            .then(data => {
-              const contentEl = document.querySelector('.content');
-              const tocNav = document.querySelector('.toc-nav');
-              if (contentEl) {
-                contentEl.innerHTML = data.html;
-                if (data.filePath) contentEl.setAttribute('data-file-path', data.filePath);
-              }
-              if (tocNav && data.tocHtml) tocNav.innerHTML = data.tocHtml;
-              if (typeof window.__injectEditorButtons === 'function') window.__injectEditorButtons();
-              updateBadge('updated');
-              setTimeout(() => updateBadge('connected'), 1500);
-            })
-            .catch(() => updateBadge('error'));
+        if (data.type === 'update') {
+          var currentFile = getCurrentFile();
+          if (currentFile === data.file) {
+            scheduleUpdate(currentFile);
+          }
         }
-      }
-    };
+      };
 
-    evtSource.onerror = function() {
-      updateBadge('error');
-      evtSource.close();
-      setTimeout(() => location.reload(), 5000);
-    };
+      evtSource.onerror = function() {
+        updateBadge('error');
+        evtSource.close();
+        setTimeout(connectSSE, 3000);
+      };
+    }
+
+    function scheduleUpdate(file) {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(function() {
+        debounceTimer = null;
+        fetchAndUpdate(file);
+      }, 100);
+    }
+
+    function refreshContent() {
+      var currentFile = getCurrentFile();
+      if (currentFile) fetchAndUpdate(currentFile);
+    }
+
+    function fetchAndUpdate(file) {
+      updateBadge('updating');
+      fetch('/api/content/' + encodeURIComponent(file))
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          var contentEl = document.querySelector('.content');
+          var tocNav = document.querySelector('.toc-nav');
+          if (contentEl) {
+            contentEl.innerHTML = data.html;
+            if (data.filePath) contentEl.setAttribute('data-file-path', data.filePath);
+          }
+          if (tocNav && data.tocHtml) tocNav.innerHTML = data.tocHtml;
+          if (typeof window.__injectEditorButtons === 'function') window.__injectEditorButtons();
+          if (typeof window.__setupTocSpy === 'function') window.__setupTocSpy();
+          updateBadge('connected');
+        })
+        .catch(function() { updateBadge('error'); });
+    }
 
     function updateBadge(state) {
-      const badge = document.querySelector('.status-dot-light');
+      var badge = document.querySelector('.status-dot-light');
       if (!badge) return;
-      const colors = { connected: '#10b981', updating: '#f59e0b', updated: '#10b981', error: '#ef4444' };
+      var colors = { connected: '#10b981', updating: '#f59e0b', error: '#ef4444' };
       badge.style.background = colors[state] || colors.connected;
       badge.style.boxShadow = '0 0 8px ' + (colors[state] || colors.connected) + '80';
     }
+
+    connectSSE();
   })();
 </script>
 `;
@@ -312,25 +338,39 @@ export function getPreviewTemplate(
   tocHtml: string,
   navInfo: { filename: string; breadcrumb: string },
   filePath?: string,
+  allFiles?: string[],
 ): string {
   const tocScript = `
 <script>
   (function() {
-    const tocItems = document.querySelectorAll('.toc-item');
-    const headings = document.querySelectorAll('.content h1, .content h2, .content h3, .content h4');
-    if (tocItems.length === 0 || headings.length === 0) return;
+    function setupTocSpy() {
+      var tocItems = document.querySelectorAll('.toc-item');
+      var headings = document.querySelectorAll('.content h1, .content h2, .content h3, .content h4');
 
-    function updateActiveHeading() {
-      let current = '';
-      const scrollTop = window.scrollY;
-      headings.forEach(h => { if (scrollTop >= h.offsetTop - 100) current = h.id; });
-      tocItems.forEach(item => {
-        item.classList.remove('active');
-        if (item.getAttribute('href') === '#' + current) item.classList.add('active');
-      });
+      if (window.__tocScrollHandler) {
+        window.removeEventListener('scroll', window.__tocScrollHandler);
+        window.__tocScrollHandler = null;
+      }
+
+      if (tocItems.length === 0 || headings.length === 0) return;
+
+      function updateActiveHeading() {
+        var current = '';
+        var scrollTop = window.scrollY;
+        headings.forEach(function(h) { if (scrollTop >= h.offsetTop - 100) current = h.id; });
+        tocItems.forEach(function(item) {
+          item.classList.remove('active');
+          if (item.getAttribute('href') === '#' + current) item.classList.add('active');
+        });
+      }
+
+      window.__tocScrollHandler = updateActiveHeading;
+      window.addEventListener('scroll', updateActiveHeading);
+      updateActiveHeading();
     }
-    window.addEventListener('scroll', updateActiveHeading);
-    updateActiveHeading();
+
+    window.__setupTocSpy = setupTocSpy;
+    setupTocSpy();
   })();
 </script>`;
 
@@ -454,7 +494,7 @@ export function getPreviewTemplate(
       overflow: hidden;
       transition: all 0.25s ease;
     }
-    .left-nav:hover .left-nav-container { width: 220px; padding: 16px; border-radius: 16px; left: 10px; }
+    .left-nav:hover .left-nav-container { width: 260px; padding: 16px; border-radius: 16px; left: 10px; }
     .back-link {
       display: flex;
       align-items: center;
@@ -483,6 +523,60 @@ export function getPreviewTemplate(
     }
     .left-nav:hover .file-path { opacity: 1; }
     .breadcrumb { color: var(--text-tertiary); font-weight: normal; display: block; margin-bottom: 4px; font-size: 12px; }
+    .file-nav {
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border-color);
+      max-height: 60vh;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    .left-nav:hover .file-nav { opacity: 1; }
+    .file-nav::-webkit-scrollbar { width: 3px; }
+    .file-nav::-webkit-scrollbar-track { background: transparent; }
+    .file-nav::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 3px; }
+    .nav-back-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      padding: 4px 6px;
+      margin-bottom: 4px;
+      border-radius: 4px;
+      cursor: pointer;
+      border: none;
+      background: none;
+      width: 100%;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .nav-back-btn:hover { color: var(--link-color); background: var(--link-hover-bg); }
+    .nav-back-btn svg { flex-shrink: 0; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 4px;
+      font-size: 13px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+      text-decoration: none;
+      color: var(--text-primary);
+      border: none;
+      background: none;
+      width: 100%;
+      text-align: left;
+    }
+    .nav-item:hover { background: var(--link-hover-bg); color: var(--link-color); }
+    .nav-item.active { background: var(--link-active-bg); color: var(--link-color); font-weight: 500; }
+    .nav-item-icon { flex-shrink: 0; font-size: 14px; }
+    .nav-item-name { overflow: hidden; text-overflow: ellipsis; }
     ${editorLinkStyles}
     @media (max-width: 1200px) { .sidebar, .left-nav { display: none; } }
   </style>
@@ -492,8 +586,10 @@ export function getPreviewTemplate(
     <div class="left-nav-container">
       <a href="/" class="back-link">←<span class="back-link-text">返回列表</span></a>
       <div class="file-path">${navInfo.breadcrumb}${navInfo.filename}</div>
+      <div class="file-nav" id="file-nav"></div>
     </div>
   </aside>
+  <script>window.__allFiles=${JSON.stringify(allFiles ?? [])};</script>
   <div class="page-layout">
     <div class="main-content">
       <div class="content"${filePath ? ` data-file-path="${filePath}"` : ''}>${mainContent}</div>
@@ -512,6 +608,81 @@ export function getPreviewTemplate(
   ${tocScript}
   ${filePath ? editorLinkScript : ''}
   ${themeScript}
+  <script>
+  (function(){
+    var nav = document.getElementById('file-nav');
+    if (!nav || !window.__allFiles || !window.__allFiles.length) return;
+
+    var currentPath = location.pathname.replace(/^\\/view\\//, '');
+    try { currentPath = decodeURIComponent(currentPath); } catch(e) {}
+
+    var currentDir = currentPath.lastIndexOf('/') > -1
+      ? currentPath.substring(0, currentPath.lastIndexOf('/'))
+      : '';
+
+    function getEntries(dir) {
+      var folders = {};
+      var files = [];
+      var prefix = dir ? dir + '/' : '';
+      for (var i = 0; i < window.__allFiles.length; i++) {
+        var f = window.__allFiles[i];
+        if (prefix && f.indexOf(prefix) !== 0) continue;
+        if (!prefix && f === f) { /* root: all files */ }
+        var rest = prefix ? f.substring(prefix.length) : f;
+        var slashIdx = rest.indexOf('/');
+        if (slashIdx > -1) {
+          var folderName = rest.substring(0, slashIdx);
+          if (!folders[folderName]) folders[folderName] = true;
+        } else {
+          files.push({ name: rest, path: f });
+        }
+      }
+      var sortedFolders = Object.keys(folders).sort();
+      files.sort(function(a, b) { return a.name.localeCompare(b.name); });
+      return { folders: sortedFolders, files: files };
+    }
+
+    function render(dir) {
+      var entries = getEntries(dir);
+      var html = '';
+
+      if (dir) {
+        var parent = dir.lastIndexOf('/') > -1 ? dir.substring(0, dir.lastIndexOf('/')) : '';
+        html += '<button class="nav-back-btn" data-dir="' + parent + '">'
+          + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>'
+          + '返回上一级</button>';
+      }
+
+      for (var i = 0; i < entries.folders.length; i++) {
+        var folder = entries.folders[i];
+        var fullDir = dir ? dir + '/' + folder : folder;
+        html += '<button class="nav-item" data-dir="' + fullDir + '">'
+          + '<span class="nav-item-icon">📁</span>'
+          + '<span class="nav-item-name">' + folder + '</span></button>';
+      }
+
+      for (var j = 0; j < entries.files.length; j++) {
+        var file = entries.files[j];
+        var isActive = file.path === currentPath ? ' active' : '';
+        html += '<a class="nav-item' + isActive + '" href="/view/' + encodeURIComponent(file.path) + '">'
+          + '<span class="nav-item-icon">📄</span>'
+          + '<span class="nav-item-name">' + file.name + '</span></a>';
+      }
+
+      nav.innerHTML = html;
+    }
+
+    nav.addEventListener('click', function(e) {
+      var btn = e.target.closest('[data-dir]');
+      if (btn) {
+        e.preventDefault();
+        render(btn.getAttribute('data-dir'));
+      }
+    });
+
+    render(currentDir);
+  })();
+  </script>
 </body>
 </html>`;
 }

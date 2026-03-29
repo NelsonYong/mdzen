@@ -111,6 +111,7 @@ export function renderMarkdown(filename: string): string {
   const { html, toc, frontmatter, filePath } = result;
   const dir = dirname(filename);
   const breadcrumb = dir !== '.' ? `<span class="breadcrumb">${dir}/</span>` : '';
+  const allFiles = getMdFiles();
 
   return getPreviewTemplate(
     basename(filename),
@@ -118,5 +119,6 @@ export function renderMarkdown(filename: string): string {
     renderToc(toc),
     { filename: basename(filename), breadcrumb },
     filePath,
+    allFiles,
   );
 }

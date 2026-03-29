@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 import { createServer } from 'node:http';
 import { extname } from 'node:path';
-import { writeFileSync, unlinkSync } from 'node:fs';
 
-import { PORT, DOC_ROOT, SUPPORTED_EXTENSIONS, MIME_TYPES, pidFilePath } from './config.ts';
+import { PORT, DOC_ROOT, SUPPORTED_EXTENSIONS, MIME_TYPES, registerInstance, unregisterInstance, findByDocRoot } from './config.ts';
 import { serveStaticFile } from './files.ts';
 import { getMarkdownWithToc, renderToc, renderFrontmatter } from './markdown.ts';
 import { renderIndex, renderMarkdown } from './pages.ts';
 import { getHtmlTemplate } from './templates.ts';
-import { handleSSE } from './sse.ts';
+import { handleSSE, closeAllClients } from './sse.ts';
 import { watchMdFiles } from './watcher.ts';
 
 const server = createServer((req, res) => {
@@ -71,16 +70,49 @@ const server = createServer((req, res) => {
   res.end(getHtmlTemplate('404', '<div class="content"><h1>页面不存在</h1></div>'));
 });
 
-const PID_FILE = pidFilePath(PORT);
+const existing = findByDocRoot(DOC_ROOT);
+if (existing) {
+  console.log(`该目录已有 mdzen 实例运行中（端口 ${existing.port}）`);
+  console.log(`📍 http://localhost:${existing.port}`);
+  process.exit(0);
+}
 
-server.listen(PORT, () => {
-  writeFileSync(PID_FILE, process.pid.toString(), 'utf-8');
-  console.log(`\n🚀 Markdown 预览服务已启动！`);
-  console.log(`📍 访问地址: http://localhost:${PORT}`);
-  console.log(`📂 文档目录: ${DOC_ROOT}`);
-  console.log(`🔄 HMR 热更新已启用\n`);
-  watchMdFiles();
-});
+const MAX_PORT_RETRIES = 3;
+let actualPort = PORT;
+
+function tryListen(port: number, attempt: number): void {
+  const onSuccess = () => {
+    server.removeListener('error', onError);
+    actualPort = port;
+    registerInstance(port, process.pid, DOC_ROOT);
+    console.log(`\n🚀 Markdown 预览服务已启动！`);
+    console.log(`📍 访问地址: http://localhost:${port}`);
+    console.log(`📂 文档目录: ${DOC_ROOT}`);
+    console.log(`🔄 HMR 热更新已启用\n`);
+    watchMdFiles();
+  };
+
+  const onError = (err: NodeJS.ErrnoException) => {
+    server.removeListener('listening', onSuccess);
+    if (err.code === 'EADDRINUSE') {
+      if (attempt >= MAX_PORT_RETRIES) {
+        console.error(`端口 ${PORT}–${port} 均被占用，请使用 -p 指定其他端口`);
+        process.exit(1);
+      }
+      console.log(`端口 ${port} 已被占用，尝试 ${port + 1}...`);
+      tryListen(port + 1, attempt + 1);
+    } else {
+      console.error('服务启动失败:', err.message);
+      process.exit(1);
+    }
+  };
+
+  server.once('listening', onSuccess);
+  server.once('error', onError);
+  server.listen(port);
+}
+
+tryListen(PORT, 0);
 
 // Graceful shutdown
 let isShuttingDown = false;
@@ -93,18 +125,20 @@ async function shutdown(signal: string): Promise<void> {
   const forceExit = setTimeout(() => {
     console.error('关闭超时，强制退出');
     process.exit(1);
-  }, 10_000);
+  }, 3_000);
+
+  closeAllClients();
 
   try {
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
-    try { unlinkSync(PID_FILE); } catch { /* already gone */ }
+    unregisterInstance(DOC_ROOT);
     clearTimeout(forceExit);
     console.log('服务已关闭');
     process.exit(0);
   } catch (err) {
-    try { unlinkSync(PID_FILE); } catch { /* already gone */ }
+    unregisterInstance(DOC_ROOT);
     console.error('关闭错误:', err);
     clearTimeout(forceExit);
     process.exit(1);
