@@ -1,5 +1,36 @@
-import { editorLinkStyles, editorLinkScript } from './editor-link.ts';
+import { editorLinkStyles, buildEditorLinkScript } from './editor-link.ts';
 import { themeStyles, themeInitScript, themeToggleButtons, themeToggleStyles, themeScript } from './theme.ts';
+import { escapeHtml, safeJsonForScript } from './utils/security.ts';
+import { EDITOR } from './config.ts';
+import {
+  copyCodeStyles,
+  copyCodeScript,
+  mobileNavStyles,
+  mobileNavMarkup,
+  mobileNavScript,
+  searchStyles,
+  searchMarkup,
+  searchScript,
+  mermaidStyles,
+  mermaidScript,
+  frontmatterNeutralStyles,
+  reducedMotionStyles,
+} from './features.ts';
+import {
+  annotationsStyles,
+  annotationsToolbarMarkup,
+  annotationsScript,
+} from './annotations-client.ts';
+import {
+  canvasStyles,
+  canvasMarkup,
+  canvasScript,
+} from './canvas-client.ts';
+import {
+  annotationsPanelStyles,
+  annotationsPanelMarkup,
+  annotationsPanelScript,
+} from './annotations-panel-client.ts';
 
 /** Served at GET /logo.svg — supports light/dark via CSS media query inside SVG */
 export const logoSvgFileContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
@@ -107,42 +138,52 @@ export const hmrScript = `
     var clientId = getClientId();
     var hasConnectedBefore = false;
     var debounceTimer = null;
+    var retryDelay = 1000;
+    var retryTimer = null;
 
     function connectSSE() {
       var evtSource = new EventSource('/sse?clientId=' + encodeURIComponent(clientId));
 
       evtSource.onopen = function() {
         updateBadge('connected');
+        retryDelay = 1000;
         if (hasConnectedBefore) refreshContent();
         hasConnectedBefore = true;
       };
 
       evtSource.onmessage = function(event) {
-        var data = JSON.parse(event.data);
+        var data;
+        try { data = JSON.parse(event.data); } catch { return; }
 
         if (data.type === 'connected') return;
 
         if (data.type === 'reload') {
-          if (!getCurrentFile()) {
-            location.reload();
-          }
+          if (!getCurrentFile()) location.reload();
           return;
         }
 
         if (data.type === 'update') {
           var currentFile = getCurrentFile();
-          if (currentFile === data.file) {
-            scheduleUpdate(currentFile);
-          }
+          if (currentFile === data.file) scheduleUpdate(currentFile);
         }
       };
 
       evtSource.onerror = function() {
         updateBadge('error');
         evtSource.close();
-        setTimeout(connectSSE, 3000);
+        if (document.hidden) return; // pause when tab is hidden
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(connectSSE, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 30000);
       };
     }
+
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden && hasConnectedBefore) {
+        if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+        connectSSE();
+      }
+    });
 
     function scheduleUpdate(file) {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -159,6 +200,9 @@ export const hmrScript = `
 
     function fetchAndUpdate(file) {
       updateBadge('updating');
+      // Preserve scroll + active anchor across HMR
+      var savedScrollY = window.scrollY;
+      var savedHash = location.hash;
       fetch('/api/content/' + encodeURIComponent(file))
         .then(function(res) { return res.json(); })
         .then(function(data) {
@@ -171,6 +215,20 @@ export const hmrScript = `
           if (tocNav && data.tocHtml) tocNav.innerHTML = data.tocHtml;
           if (typeof window.__injectEditorButtons === 'function') window.__injectEditorButtons();
           if (typeof window.__setupTocSpy === 'function') window.__setupTocSpy();
+          if (typeof window.__injectCopyButtons === 'function') window.__injectCopyButtons();
+          if (typeof window.__renderMermaid === 'function') window.__renderMermaid();
+          if (typeof window.__reapplyAnnotations === 'function') window.__reapplyAnnotations();
+          if (typeof window.__canvasResync === 'function') window.__canvasResync();
+          // Restore scroll position (or jump to anchor if present)
+          requestAnimationFrame(function() {
+            if (savedHash) {
+              var target = document.querySelector(savedHash);
+              if (target) target.scrollIntoView({ behavior: 'auto', block: 'start' });
+              else window.scrollTo(0, savedScrollY);
+            } else {
+              window.scrollTo(0, savedScrollY);
+            }
+          });
           updateBadge('connected');
         })
         .catch(function() { updateBadge('error'); });
@@ -180,8 +238,11 @@ export const hmrScript = `
       var badge = document.querySelector('.status-dot-light');
       if (!badge) return;
       var colors = { connected: '#10b981', updating: '#f59e0b', error: '#ef4444' };
+      var labels = { connected: 'HMR 已连接', updating: 'HMR 正在更新', error: 'HMR 连接失败' };
       badge.style.background = colors[state] || colors.connected;
       badge.style.boxShadow = '0 0 8px ' + (colors[state] || colors.connected) + '80';
+      badge.title = labels[state] || labels.connected;
+      badge.setAttribute('aria-label', labels[state] || labels.connected);
     }
 
     connectSSE();
@@ -233,9 +294,37 @@ const sharedContentStyles = `
   padding: 12px 16px;
   border-radius: 0 4px 4px 0;
 }
-.content table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-.content th, .content td { border: 1px solid var(--border-medium); padding: 10px; text-align: left; }
-.content th { background: var(--bg-table-header); }
+.content .table-wrap {
+  margin: 1rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: 6px;
+  border: 1px solid var(--border-medium);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-medium) transparent;
+}
+.content .table-wrap:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
+.content .table-wrap::-webkit-scrollbar { height: 8px; }
+.content .table-wrap::-webkit-scrollbar-track { background: transparent; }
+.content .table-wrap::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 4px; }
+.content .table-wrap::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+.content .table-wrap table {
+  border-collapse: collapse;
+  margin: 0;
+  min-width: 100%;
+  width: max-content;
+}
+.content th, .content td {
+  border: 1px solid var(--border-medium);
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+}
+.content th { background: var(--bg-table-header); white-space: nowrap; font-weight: 600; }
+.content td code { white-space: nowrap; }
+.content td p:first-child { margin-top: 0; }
+.content td p:last-child { margin-bottom: 0; }
 .content img { max-width: 100%; height: auto; display: block; border-radius: 6px; margin: 0.75rem auto; }
 .content a { color: var(--link-color); }
 `;
@@ -249,7 +338,7 @@ export function getHtmlTemplate(title: string, content: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title}</title>
+  <title>${escapeHtml(title)}</title>
   ${faviconLink}
   ${themeInitScript}
   <style>
@@ -355,6 +444,11 @@ export function getHtmlTemplate(title: string, content: string): string {
     .back-link { display: inline-block; margin-bottom: 10px; color: var(--link-color); text-decoration: none; }
     .back-link:hover { text-decoration: underline; }
     .breadcrumb { color: var(--text-tertiary); }
+    .tree-folder-header { width: 100%; border: none; background: none; text-align: left; }
+    .tree-folder-header:focus-visible { outline: 2px solid var(--link-color); outline-offset: 1px; }
+    ${reducedMotionStyles}
+    ${searchStyles}
+    ${frontmatterNeutralStyles}
   </style>
 </head>
 <body>
@@ -362,8 +456,10 @@ export function getHtmlTemplate(title: string, content: string): string {
     ${content}
   </div>
   ${statusDotHtml}
+  ${searchMarkup}
   ${hmrScript}
   ${themeScript}
+  ${searchScript}
 </body>
 </html>`;
 }
@@ -380,34 +476,84 @@ export function getPreviewTemplate(
   const tocScript = `
 <script>
   (function() {
-    function setupTocSpy() {
-      var tocItems = document.querySelectorAll('.toc-item');
-      var headings = document.querySelectorAll('.content h1, .content h2, .content h3, .content h4');
+    var rafId = null;
+    var lastActiveId = '';
+    var cachedTops = [];     // [{id, top}] sorted ascending
+    var idToItem = null;     // Map<id, anchor>
 
+    function teardown() {
       if (window.__tocScrollHandler) {
         window.removeEventListener('scroll', window.__tocScrollHandler);
         window.__tocScrollHandler = null;
       }
-
-      if (tocItems.length === 0 || headings.length === 0) return;
-
-      function updateActiveHeading() {
-        var current = '';
-        var scrollTop = window.scrollY;
-        headings.forEach(function(h) { if (scrollTop >= h.offsetTop - 100) current = h.id; });
-        tocItems.forEach(function(item) {
-          item.classList.remove('active');
-          if (item.getAttribute('href') === '#' + current) item.classList.add('active');
-        });
+      if (window.__tocResizeHandler) {
+        window.removeEventListener('resize', window.__tocResizeHandler);
+        window.__tocResizeHandler = null;
       }
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    }
 
-      window.__tocScrollHandler = updateActiveHeading;
-      window.addEventListener('scroll', updateActiveHeading);
-      updateActiveHeading();
+    function recomputeTops(headings) {
+      cachedTops = [];
+      for (var i = 0; i < headings.length; i++) {
+        var h = headings[i];
+        if (!h.id) continue;
+        cachedTops.push({ id: h.id, top: h.offsetTop });
+      }
+      cachedTops.sort(function(a, b) { return a.top - b.top; });
+    }
+
+    function updateActive() {
+      rafId = null;
+      if (cachedTops.length === 0) return;
+      var scrollTop = window.scrollY + 100;
+      // Find rightmost top <= scrollTop via linear scan from end (cheap; usually returns near top of array)
+      var current = '';
+      for (var i = cachedTops.length - 1; i >= 0; i--) {
+        if (cachedTops[i].top <= scrollTop) { current = cachedTops[i].id; break; }
+      }
+      if (current === lastActiveId) return;
+      // Mutate only the items that change
+      if (lastActiveId && idToItem) {
+        var prev = idToItem.get(lastActiveId);
+        if (prev) prev.classList.remove('active');
+      }
+      if (current && idToItem) {
+        var next = idToItem.get(current);
+        if (next) next.classList.add('active');
+      }
+      lastActiveId = current;
+    }
+
+    function onScroll() {
+      if (rafId) return;
+      rafId = requestAnimationFrame(updateActive);
+    }
+
+    function setupTocSpy() {
+      teardown();
+      var tocItems = document.querySelectorAll('.toc-item');
+      var headings = document.querySelectorAll('.content h1, .content h2, .content h3, .content h4');
+      if (!tocItems.length || !headings.length) return;
+
+      idToItem = new Map();
+      tocItems.forEach(function(item) {
+        var href = item.getAttribute('href');
+        if (href && href.charAt(0) === '#') idToItem.set(href.slice(1), item);
+      });
+      lastActiveId = '';
+      recomputeTops(headings);
+
+      window.__tocScrollHandler = onScroll;
+      window.__tocResizeHandler = function() { recomputeTops(headings); onScroll(); };
+      window.addEventListener('scroll', onScroll, { passive: true });
+      window.addEventListener('resize', window.__tocResizeHandler, { passive: true });
+      updateActive();
     }
 
     window.__setupTocSpy = setupTocSpy;
-    setupTocSpy();
+    // Wait one frame so layout is stable before measuring offsetTop
+    requestAnimationFrame(setupTocSpy);
   })();
 </script>`;
 
@@ -416,7 +562,7 @@ export function getPreviewTemplate(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title}</title>
+  <title>${escapeHtml(title)}</title>
   ${faviconLink}
   ${themeInitScript}
   <style>
@@ -432,6 +578,7 @@ export function getPreviewTemplate(
       color: var(--text-primary);
       background: var(--bg-page);
     }
+    body :focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; border-radius: 3px; }
     .page-layout { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
     .main-content { width: 100%; }
     .sidebar { position: fixed; right: 0; top: 70px; z-index: 50; }
@@ -445,7 +592,8 @@ export function getPreviewTemplate(
       width: 40px;
       transition: all 0.25s ease;
     }
-    .sidebar:hover .toc-container {
+    .sidebar:hover .toc-container,
+    .sidebar:focus-within .toc-container {
       width: 260px;
       padding: 16px;
       overflow-y: auto;
@@ -466,9 +614,11 @@ export function getPreviewTemplate(
       writing-mode: vertical-rl;
       transition: all 0.25s ease;
     }
-    .sidebar:hover .toc-title { writing-mode: horizontal-tb; }
+    .sidebar:hover .toc-title,
+    .sidebar:focus-within .toc-title { writing-mode: horizontal-tb; }
     .toc-nav { opacity: 0; transition: opacity 0.2s ease; }
-    .sidebar:hover .toc-nav { opacity: 1; }
+    .sidebar:hover .toc-nav,
+    .sidebar:focus-within .toc-nav { opacity: 1; }
     .toc-item {
       display: block;
       color: var(--text-secondary);
@@ -479,8 +629,11 @@ export function getPreviewTemplate(
       font-size: 13px;
       line-height: 1.4;
       border-left: 2px solid transparent;
-      transition: all 0.15s ease;
+      transition: color 0.15s, background 0.15s, border-left-color 0.15s;
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
     }
     .toc-item:hover { color: var(--link-color); border-left-color: var(--border-medium); background: var(--link-hover-bg); }
     .toc-item.active { color: var(--link-color); border-left-color: var(--link-color); background: var(--link-active-bg); }
@@ -522,8 +675,6 @@ export function getPreviewTemplate(
       font-size: 11px;
     }
     .fm-bool { display: inline-block; padding: 2px 10px; border-radius: 4px; font-weight: 500; font-size: 11px; }
-    .fm-true { background: #dcfce7; color: #166534; }
-    .fm-false { background: #fee2e2; color: #991b1b; }
     .left-nav { position: fixed; left: 0; top: 70px; z-index: 50; }
     .left-nav-container {
       background: var(--bg-sidebar);
@@ -534,7 +685,8 @@ export function getPreviewTemplate(
       overflow: hidden;
       transition: all 0.25s ease;
     }
-    .left-nav:hover .left-nav-container { width: 260px; padding: 16px; border-radius: 16px; left: 10px; }
+    .left-nav:hover .left-nav-container,
+    .left-nav:focus-within .left-nav-container { width: 260px; padding: 16px; border-radius: 16px; left: 10px; }
     .nav-hint {
       display: flex;
       align-items: center;
@@ -546,7 +698,8 @@ export function getPreviewTemplate(
       transition: opacity 0.2s ease;
       user-select: none;
     }
-    .left-nav:hover .nav-hint { opacity: 0; pointer-events: none; }
+    .left-nav:hover .nav-hint,
+    .left-nav:focus-within .nav-hint { opacity: 0; pointer-events: none; }
     .nav-breadcrumb {
       display: flex;
       align-items: center;
@@ -560,7 +713,8 @@ export function getPreviewTemplate(
       overflow: hidden;
       min-height: 28px;
     }
-    .left-nav:hover .nav-breadcrumb { opacity: 1; }
+    .left-nav:hover .nav-breadcrumb,
+    .left-nav:focus-within .nav-breadcrumb { opacity: 1; }
     .nav-bc-item {
       font-size: 12px;
       white-space: nowrap;
@@ -590,7 +744,8 @@ export function getPreviewTemplate(
       transition: opacity 0.2s ease;
       margin-bottom: 4px;
     }
-    .left-nav:hover .file-path { opacity: 1; }
+    .left-nav:hover .file-path,
+    .left-nav:focus-within .file-path { opacity: 1; }
     .file-nav {
       opacity: 0;
       transition: opacity 0.2s ease;
@@ -601,7 +756,8 @@ export function getPreviewTemplate(
       overflow-y: auto;
       overflow-x: hidden;
     }
-    .left-nav:hover .file-nav { opacity: 1; }
+    .left-nav:hover .file-nav,
+    .left-nav:focus-within .file-nav { opacity: 1; }
     .file-nav::-webkit-scrollbar { width: 3px; }
     .file-nav::-webkit-scrollbar-track { background: transparent; }
     .file-nav::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 3px; }
@@ -629,22 +785,30 @@ export function getPreviewTemplate(
     .nav-item-icon { flex-shrink: 0; font-size: 14px; }
     .nav-item-name { overflow: hidden; text-overflow: ellipsis; }
     ${editorLinkStyles}
-    @media (max-width: 1200px) { .sidebar, .left-nav { display: none; } }
+    ${copyCodeStyles}
+    ${mermaidStyles}
+    ${searchStyles}
+    ${mobileNavStyles}
+    ${frontmatterNeutralStyles}
+    ${reducedMotionStyles}
+    ${annotationsStyles}
+    ${canvasStyles}
+    ${annotationsPanelStyles}
   </style>
 </head>
 <body>
   <aside class="left-nav">
     <div class="left-nav-container">
-      <div class="nav-hint">←</div>
-      <nav class="nav-breadcrumb" id="nav-breadcrumb"></nav>
-      <div class="file-path">${navInfo.filename}</div>
+      <div class="nav-hint" aria-hidden="true">←</div>
+      <nav class="nav-breadcrumb" id="nav-breadcrumb" aria-label="路径"></nav>
+      <div class="file-path">${escapeHtml(navInfo.filename)}</div>
       <div class="file-nav" id="file-nav"></div>
     </div>
   </aside>
-  <script>window.__allFiles=${JSON.stringify(allFiles ?? [])};</script>
+  <script>window.__allFiles=${safeJsonForScript(allFiles ?? [])};</script>
   <div class="page-layout">
     <div class="main-content">
-      <div class="content"${filePath ? ` data-file-path="${filePath}"` : ''}>${mainContent}</div>
+      <div class="content"${filePath ? ` data-file-path="${escapeHtml(filePath)}"` : ''}>${mainContent}</div>
     </div>
     <aside class="sidebar">
       <div class="toc-container">
@@ -656,14 +820,32 @@ export function getPreviewTemplate(
     </aside>
   </div>
   ${statusDotHtml}
+  ${mobileNavMarkup}
+  ${searchMarkup}
+  ${annotationsToolbarMarkup}
+  ${canvasMarkup}
+  ${annotationsPanelMarkup}
   ${hmrScript}
   ${tocScript}
-  ${filePath ? editorLinkScript : ''}
+  ${filePath ? buildEditorLinkScript(EDITOR) : ''}
   ${themeScript}
+  ${copyCodeScript}
+  ${mobileNavScript}
+  ${searchScript}
+  ${mermaidScript}
+  ${annotationsScript}
+  ${canvasScript}
+  ${annotationsPanelScript}
   <script>
   (function(){
     var nav = document.getElementById('file-nav');
     if (!nav || !window.__allFiles || !window.__allFiles.length) return;
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, function(c) {
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+      });
+    }
 
     var currentPath = location.pathname.replace(/^\\/view\\//, '');
     try { currentPath = decodeURIComponent(currentPath); } catch(e) {}
@@ -679,7 +861,6 @@ export function getPreviewTemplate(
       for (var i = 0; i < window.__allFiles.length; i++) {
         var f = window.__allFiles[i];
         if (prefix && f.indexOf(prefix) !== 0) continue;
-        if (!prefix && f === f) { /* root: all files */ }
         var rest = prefix ? f.substring(prefix.length) : f;
         var slashIdx = rest.indexOf('/');
         if (slashIdx > -1) {
@@ -704,9 +885,9 @@ export function getPreviewTemplate(
         var isLast = i === parts.length - 1;
         html += '<span class="nav-bc-sep">/</span>';
         if (isLast) {
-          html += '<span class="nav-bc-item nav-bc-current">' + parts[i] + '</span>';
+          html += '<span class="nav-bc-item nav-bc-current" aria-current="location">' + esc(parts[i]) + '</span>';
         } else {
-          html += '<button class="nav-bc-item" data-dir="' + segDir + '">' + parts[i] + '</button>';
+          html += '<button type="button" class="nav-bc-item" data-dir="' + esc(segDir) + '">' + esc(parts[i]) + '</button>';
         }
       }
       bc.innerHTML = html;
@@ -720,17 +901,18 @@ export function getPreviewTemplate(
       for (var i = 0; i < entries.folders.length; i++) {
         var folder = entries.folders[i];
         var fullDir = dir ? dir + '/' + folder : folder;
-        html += '<button class="nav-item" data-dir="' + fullDir + '">'
-          + '<span class="nav-item-icon">📁</span>'
-          + '<span class="nav-item-name">' + folder + '</span></button>';
+        html += '<button type="button" class="nav-item" data-dir="' + esc(fullDir) + '">'
+          + '<span class="nav-item-icon" aria-hidden="true">📁</span>'
+          + '<span class="nav-item-name">' + esc(folder) + '</span></button>';
       }
 
       for (var j = 0; j < entries.files.length; j++) {
         var file = entries.files[j];
         var isActive = file.path === currentPath ? ' active' : '';
-        html += '<a class="nav-item' + isActive + '" href="/view/' + encodeURIComponent(file.path) + '">'
-          + '<span class="nav-item-icon">📄</span>'
-          + '<span class="nav-item-name">' + file.name + '</span></a>';
+        var ariaCurrent = isActive ? ' aria-current="page"' : '';
+        html += '<a class="nav-item' + isActive + '" href="/view/' + encodeURIComponent(file.path) + '"' + ariaCurrent + '>'
+          + '<span class="nav-item-icon" aria-hidden="true">📄</span>'
+          + '<span class="nav-item-name">' + esc(file.name) + '</span></a>';
       }
 
       nav.innerHTML = html;

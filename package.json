@@ -1,7 +1,7 @@
 {
   "name": "mdzen",
-  "version": "1.0.5",
-  "description": "Fast local Markdown preview server with hot reload",
+  "version": "1.1.0",
+  "description": "Fast local Markdown preview server with hot reload, sidebar TOC, and editor jump",
   "type": "module",
   "main": "dist/server.js",
   "types": "dist/server.d.ts",
@@ -20,20 +20,27 @@
   "scripts": {
     "start": "node --experimental-strip-types src/server.ts",
     "build": "tsc -p tsconfig.build.json",
+    "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm run typecheck && pnpm run build"
+    "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
   },
   "keywords": [
     "markdown",
     "preview",
     "hot-reload",
     "hmr",
-    "cli"
+    "cli",
+    "mdc",
+    "cursor",
+    "admonition",
+    "toc",
+    "live-reload",
+    "docs"
   ],
   "author": "",
   "license": "ISC",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.6.0"
   },
   "packageManager": "pnpm@10.12.4",
   "dependencies": {

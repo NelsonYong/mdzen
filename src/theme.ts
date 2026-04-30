@@ -159,9 +159,17 @@ export const themeStyles = `
 /** Inline script for <head> to prevent flash of wrong theme */
 export const themeInitScript = `<script>
 (function(){
-  var s = localStorage.getItem('mdpeek-theme') || 'system';
+  // One-time migration from legacy key
+  try {
+    var legacy = localStorage.getItem('mdzen-theme');
+    if (legacy && !localStorage.getItem('mdzen-theme')) {
+      localStorage.setItem('mdzen-theme', legacy);
+      localStorage.removeItem('mdzen-theme');
+    }
+  } catch(e) {}
+  var s = (function(){ try { return localStorage.getItem('mdzen-theme'); } catch(e) { return null; } })() || 'system';
   var d = s === 'system'
-    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
     : s;
   document.documentElement.setAttribute('data-theme', d);
 })();
@@ -219,28 +227,38 @@ export const themeToggleStyles = `
   justify-content: center;
   transition: all 0.2s ease;
 }
-/* Hover: expand into theme panel */
-.status-dot:hover {
+/* Hover/focus: expand into theme panel */
+.status-dot:hover,
+.status-dot:focus-within {
   background: var(--bg-content);
   border: 1px solid var(--border-color);
   box-shadow: var(--shadow);
   padding: 3px;
 }
-.status-dot:hover .status-dot-light {
+.status-dot:hover .status-dot-light,
+.status-dot:focus-within .status-dot-light {
   width: 8px;
   height: 8px;
   min-width: 8px;
   margin: 0 4px;
 }
-.status-dot:hover .theme-btn {
+.status-dot:hover .theme-btn,
+.status-dot:focus-within .theme-btn {
   width: 28px;
   opacity: 1;
 }
+/* Always allow tab to reach the buttons even when collapsed */
+.status-dot .theme-btn { pointer-events: auto; }
 .theme-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
 }
-.theme-btn.active {
+.theme-btn:focus-visible {
+  outline: 2px solid var(--link-color);
+  outline-offset: 1px;
+}
+.theme-btn.active,
+.theme-btn[aria-pressed="true"] {
   background: var(--link-color);
   color: #fff;
 }
@@ -256,20 +274,22 @@ export const themeScript = `
       ? (mq.matches ? 'dark' : 'light')
       : mode;
     document.documentElement.setAttribute('data-theme', resolved);
-    // Update toggle buttons
+    // Update toggle buttons + aria-pressed state
     document.querySelectorAll('.theme-btn').forEach(function(btn) {
-      btn.classList.toggle('active', btn.getAttribute('data-theme-mode') === mode);
+      var active = btn.getAttribute('data-theme-mode') === mode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', String(active));
     });
   }
 
   function setTheme(mode) {
-    localStorage.setItem('mdpeek-theme', mode);
+    localStorage.setItem('mdzen-theme', mode);
     applyTheme(mode);
   }
 
   // Listen for system preference changes
   mq.addEventListener('change', function() {
-    var saved = localStorage.getItem('mdpeek-theme') || 'system';
+    var saved = localStorage.getItem('mdzen-theme') || 'system';
     if (saved === 'system') applyTheme('system');
   });
 
@@ -281,7 +301,7 @@ export const themeScript = `
   });
 
   // Initial state
-  applyTheme(localStorage.getItem('mdpeek-theme') || 'system');
+  applyTheme(localStorage.getItem('mdzen-theme') || 'system');
   window.__setTheme = setTheme;
 })();
 </script>`;

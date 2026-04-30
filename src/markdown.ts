@@ -1,40 +1,43 @@
-import { marked } from 'marked';
+import { Marked, type Tokens, type RendererThis } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import hljs from 'highlight.js';
-import { readFileSync, existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { DOC_ROOT } from './config.ts';
 import type { TocItem, MarkdownResult } from './types.ts';
-import { resetBlockLineQueue, consumeLineAttr } from './line-mapping.ts';
+import { createLineMapping, type LineMappingContext } from './line-mapping.ts';
+import { escapeHtml, html, raw, safeResolve, PathTraversalError } from './utils/security.ts';
 
 type AdmonitionType = 'info' | 'tip' | 'warning' | 'danger' | 'caution' | 'note';
 
-interface AdmonitionStyle {
-  border: string;
-  titleBg: string;
-  titleColor: string;
-  bg: string;
-  label: string;
-}
-
-const ADMONITION_STYLES: Record<AdmonitionType, AdmonitionStyle> = {
-  info:    { border: '#3b82f6', titleBg: '#dbeafe', titleColor: '#1d4ed8', bg: '#eff6ff', label: 'INFO' },
-  tip:     { border: '#22c55e', titleBg: '#dcfce7', titleColor: '#15803d', bg: '#f0fdf4', label: 'TIP' },
-  warning: { border: '#f59e0b', titleBg: '#fef3c7', titleColor: '#b45309', bg: '#fffbeb', label: 'WARNING' },
-  danger:  { border: '#ef4444', titleBg: '#fee2e2', titleColor: '#b91c1c', bg: '#fef2f2', label: 'DANGER' },
-  caution: { border: '#f97316', titleBg: '#ffedd5', titleColor: '#c2410c', bg: '#fff7ed', label: 'CAUTION' },
-  note:    { border: '#a855f7', titleBg: '#f3e8ff', titleColor: '#7e22ce', bg: '#faf5ff', label: 'NOTE' },
+const ADMONITION_LABEL: Record<AdmonitionType, string> = {
+  info: 'INFO',
+  tip: 'TIP',
+  warning: 'WARNING',
+  danger: 'DANGER',
+  caution: 'CAUTION',
+  note: 'NOTE',
 };
 
-// Module-level state reset before each render pass to produce consistent heading IDs
-let currentUsedIds = new Set<string>();
+interface AdmonitionToken {
+  type: 'admonition';
+  raw: string;
+  admonitionType: AdmonitionType;
+  title: string;
+  tokens: Tokens.Generic[];
+}
+
+interface MermaidToken {
+  type: 'mermaid';
+  raw: string;
+  text: string;
+}
 
 export function generateUniqueId(text: string, usedIds: Set<string>): string {
   const baseId = text
     .toLowerCase()
     .replace(/<[^>]*>/g, '')
-    .replace(/[^\w\u4e00-\u9fa5]+/g, '-')
+    .replace(/[^\w一-龥]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
   let id = baseId;
@@ -47,152 +50,178 @@ export function generateUniqueId(text: string, usedIds: Set<string>): string {
   return id;
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+interface RenderContext {
+  marked: Marked;
+  usedIds: Set<string>;
+  lineMapping: LineMappingContext;
 }
 
-// Syntax highlighting via highlight.js (walkTokens pre-highlights code tokens)
-marked.use(
-  markedHighlight({
-    emptyLangClass: 'hljs',
-    langPrefix: 'hljs language-',
-    highlight(code: string, lang: string): string {
-      if (lang && hljs.getLanguage(lang)) {
+function createRenderContext(): RenderContext {
+  const m = new Marked();
+  const usedIds = new Set<string>();
+  const lineMapping = createLineMapping(m);
+
+  m.use(
+    markedHighlight({
+      emptyLangClass: 'hljs',
+      langPrefix: 'hljs language-',
+      highlight(code: string, lang: string): string {
+        if (lang && hljs.getLanguage(lang)) {
+          try {
+            return hljs.highlight(code, { language: lang }).value;
+          } catch {
+            /* fall through to auto-detect */
+          }
+        }
         try {
-          return hljs.highlight(code, { language: lang }).value;
+          return hljs.highlightAuto(code).value;
         } catch {
-          // fall through to auto-detect
+          return code;
         }
-      }
-      try {
-        return hljs.highlightAuto(code).value;
-      } catch {
-        return code;
-      }
-    },
-  }),
-);
+      },
+    }),
+  );
 
-// Block-level renderers that inject data-source-line for editor linking.
-// The consumeLineAttr() call only succeeds when the queue front matches the
-// token type, so nested elements (rendered before their parent) naturally skip.
-marked.use({
-  renderer: {
-    heading(this: any, token: any): string {
-      const id = generateUniqueId(token.text, currentUsedIds);
-      const lineAttr = consumeLineAttr('heading');
-      return `<h${token.depth}${lineAttr} id="${id}">${this.parser.parseInline(token.tokens)}</h${token.depth}>\n`;
-    },
-    paragraph(this: any, token: any): string {
-      const lineAttr = consumeLineAttr('paragraph');
-      return `<p${lineAttr}>${this.parser.parseInline(token.tokens)}</p>\n`;
-    },
-    code(this: any, token: any): string {
-      const lineAttr = consumeLineAttr('code');
-      const lang = (token.lang || '').match(/^\S*/)?.[0] || '';
-      const langClass = lang ? `hljs language-${lang}` : 'hljs';
-      const text = token.text.replace(/\n$/, '') + '\n';
-      // token.text is pre-highlighted by markedHighlight's walkTokens; escaped=true
-      const code = token.escaped ? text : escapeHtml(text);
-      return `<pre${lineAttr}><code class="${langClass}">${code}</code></pre>\n`;
-    },
-    blockquote(this: any, token: any): string {
-      const lineAttr = consumeLineAttr('blockquote');
-      const body = this.parser.parse(token.tokens);
-      return `<blockquote${lineAttr}>\n${body}</blockquote>\n`;
-    },
-    list(this: any, token: any): string {
-      const lineAttr = consumeLineAttr('list');
-      const tag = token.ordered ? 'ol' : 'ul';
-      const startAttr = token.ordered && token.start !== 1 ? ` start="${token.start}"` : '';
-      let body = '';
-      for (const item of token.items) {
-        body += this.listitem(item);
-      }
-      return `<${tag}${startAttr}${lineAttr}>\n${body}</${tag}>\n`;
-    },
-    table(this: any, token: any): string {
-      const lineAttr = consumeLineAttr('table');
-      // Render header cells
-      let headerCells = '';
-      for (const cell of token.header) {
-        headerCells += this.tablecell(cell);
-      }
-      const header = this.tablerow({ text: headerCells });
-      // Render body rows
-      let body = '';
-      for (const row of token.rows) {
-        let rowCells = '';
-        for (const cell of row) {
-          rowCells += this.tablecell(cell);
+  m.use({
+    renderer: {
+      heading(token) {
+        const id = generateUniqueId(token.text, usedIds);
+        const lineAttr = lineMapping.consume('heading');
+        return `<h${token.depth}${lineAttr} id="${id}">${this.parser.parseInline(token.tokens)}</h${token.depth}>\n`;
+      },
+      paragraph(token) {
+        const lineAttr = lineMapping.consume('paragraph');
+        return `<p${lineAttr}>${this.parser.parseInline(token.tokens)}</p>\n`;
+      },
+      code(token) {
+        const lineAttr = lineMapping.consume('code');
+        const lang = (token.lang ?? '').match(/^\S*/)?.[0] ?? '';
+        const langClass = lang ? `hljs language-${lang}` : 'hljs';
+        const text = token.text.replace(/\n$/, '') + '\n';
+        const code = token.escaped ? text : escapeHtml(text);
+        return `<pre${lineAttr} data-lang="${escapeHtml(lang)}"><code class="${langClass}">${code}</code></pre>\n`;
+      },
+      blockquote(token) {
+        const lineAttr = lineMapping.consume('blockquote');
+        const body = this.parser.parse(token.tokens);
+        return `<blockquote${lineAttr}>\n${body}</blockquote>\n`;
+      },
+      list(token) {
+        const lineAttr = lineMapping.consume('list');
+        const tag = token.ordered ? 'ol' : 'ul';
+        const startAttr = token.ordered && token.start !== 1 ? ` start="${token.start}"` : '';
+        let body = '';
+        for (const item of token.items) {
+          body += this.listitem(item);
         }
-        body += this.tablerow({ text: rowCells });
-      }
-      if (body) body = `<tbody>${body}</tbody>`;
-      return `<table${lineAttr}>\n<thead>\n${header}</thead>\n${body}</table>\n`;
+        return `<${tag}${startAttr}${lineAttr}>\n${body}</${tag}>\n`;
+      },
+      table(token) {
+        const lineAttr = lineMapping.consume('table');
+        let headerCells = '';
+        for (const cell of token.header) {
+          headerCells += this.tablecell(cell);
+        }
+        const header = this.tablerow({ text: headerCells });
+        let body = '';
+        for (const row of token.rows) {
+          let rowCells = '';
+          for (const cell of row) {
+            rowCells += this.tablecell(cell);
+          }
+          body += this.tablerow({ text: rowCells });
+        }
+        if (body) body = `<tbody>${body}</tbody>`;
+        // Wrap in a horizontally-scrollable container so wide tables don't break the layout.
+        // line-attr stays on the <table> so editor-jump still targets the right source line.
+        return `<div class="table-wrap" tabindex="0" role="region" aria-label="表格"><table${lineAttr}>\n<thead>\n${header}</thead>\n${body}</table></div>\n`;
+      },
+      hr() {
+        const lineAttr = lineMapping.consume('hr');
+        return `<hr${lineAttr}>\n`;
+      },
+      html(token) {
+        lineMapping.consume('html');
+        return token.text;
+      },
+      image(token) {
+        const text = escapeHtml(token.text ?? '');
+        const titleAttr = token.title ? ` title="${escapeHtml(token.title)}"` : '';
+        const href = escapeHtml(token.href ?? '');
+        return `<img src="${href}" alt="${text}"${titleAttr} loading="lazy" decoding="async">`;
+      },
     },
-    hr(): string {
-      const lineAttr = consumeLineAttr('hr');
-      return `<hr${lineAttr}>\n`;
-    },
-    html(token: any): string {
-      // Raw HTML blocks: consume queue entry to stay in sync, but don't inject
-      consumeLineAttr('html');
-      return token.text;
-    },
-  },
-});
+  });
 
-// Admonition block extension: :::type [title]\ncontent\n:::
-marked.use({
-  extensions: [
-    {
-      name: 'admonition',
-      level: 'block' as const,
-      start(src: string): number {
-        return src.indexOf(':::');
+  m.use({
+    extensions: [
+      {
+        // Catch ```mermaid blocks BEFORE the regular code tokenizer so highlight.js never touches them.
+        // Emit a <pre class="mermaid"> with the raw source — the client mermaid loader picks these up.
+        name: 'mermaid',
+        level: 'block' as const,
+        start(src: string): number {
+          return src.indexOf('```mermaid');
+        },
+        tokenizer(src: string): MermaidToken | undefined {
+          const match = /^```mermaid[ \t]*\n([\s\S]*?)\n```(?:\n|$)/.exec(src);
+          if (match) {
+            return { type: 'mermaid', raw: match[0]!, text: match[1] ?? '' };
+          }
+          return undefined;
+        },
+        renderer(token: Tokens.Generic): string {
+          const t = token as unknown as MermaidToken;
+          const lineAttr = lineMapping.consume('mermaid');
+          return `<pre class="mermaid" data-mermaid-source="true"${lineAttr}>${escapeHtml(t.text)}</pre>\n`;
+        },
       },
-      tokenizer(this: any, src: string): any {
-        const rule = /^:::(info|tip|warning|danger|caution|note)([ \t]+[^\n]*)?\n([\s\S]*?)\n:::/;
-        const match = rule.exec(src);
-        if (match) {
-          return {
-            type: 'admonition',
-            raw: match[0],
-            admonitionType: match[1],
-            title: match[2] ? match[2].trim() : '',
-            tokens: this.lexer.blockTokens(match[3] ?? ''),
-          };
-        }
+      {
+        name: 'admonition',
+        level: 'block' as const,
+        start(src: string): number {
+          return src.indexOf(':::');
+        },
+        tokenizer(src: string): AdmonitionToken | undefined {
+          const rule = /^:::(info|tip|warning|danger|caution|note)([ \t]+[^\n]*)?\n([\s\S]*?)\n:::/;
+          const match = rule.exec(src);
+          if (match) {
+            return {
+              type: 'admonition',
+              raw: match[0]!,
+              admonitionType: match[1] as AdmonitionType,
+              title: match[2] ? match[2].trim() : '',
+              tokens: m.Lexer.lex(match[3] ?? ''),
+            };
+          }
+          return undefined;
+        },
+        renderer(this: RendererThis, token: Tokens.Generic): string {
+          const t = token as unknown as AdmonitionToken;
+          const lineAttr = lineMapping.consume('admonition');
+          const title = t.title || ADMONITION_LABEL[t.admonitionType];
+          const content = this.parser.parse(t.tokens);
+          return (
+            `<div class="admonition admonition-${t.admonitionType}"${lineAttr}>` +
+            `<div class="admonition-title">${escapeHtml(title)}</div>` +
+            `<div class="admonition-content">${content}</div>` +
+            `</div>\n`
+          );
+        },
       },
-      renderer(this: any, token: any): string {
-        const lineAttr = consumeLineAttr('admonition');
-        const style =
-          ADMONITION_STYLES[token.admonitionType as AdmonitionType] ?? ADMONITION_STYLES.info;
-        const title = (token.title as string) || style.label;
-        const content = this.parser.parse(token.tokens) as string;
-        return (
-          `<div class="admonition admonition-${token.admonitionType}"${lineAttr}>` +
-          `<div class="admonition-title">${title}</div>` +
-          `<div class="admonition-content">${content}</div>` +
-          `</div>\n`
-        );
-      },
-    },
-  ],
-});
+    ],
+  });
+
+  return { marked: m, usedIds, lineMapping };
+}
 
 export function parseFrontmatter(content: string): {
   frontmatter: Record<string, string | boolean> | null;
   body: string;
 } {
-  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) return { frontmatter: null, body: content };
+  const normalized = content.replace(/\r\n/g, '\n');
+  const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) return { frontmatter: null, body: normalized };
 
   const frontmatter: Record<string, string | boolean> = {};
   for (const line of match[1]!.split('\n')) {
@@ -217,29 +246,30 @@ export function parseFrontmatter(content: string): {
   return { frontmatter, body: match[2]! };
 }
 
-export function extractToc(markdown: string): TocItem[] {
-  const toc: TocItem[] = [];
+export interface PreWalkResult {
+  toc: TocItem[];
+}
+
+function preWalkForToc(marked: Marked, body: string): TocItem[] {
+  const tokens = marked.lexer(body);
   const usedIds = new Set<string>();
-  let inCodeBlock = false;
-
-  for (const line of markdown.split('\n')) {
-    if (line.trim().startsWith('```')) {
-      inCodeBlock = !inCodeBlock;
-      continue;
-    }
-    if (inCodeBlock) continue;
-
-    const match = line.match(/^(#{1,4})\s+(.+)$/);
-    if (match) {
+  const toc: TocItem[] = [];
+  for (const token of tokens) {
+    if (token.type === 'heading' && (token as Tokens.Heading).depth <= 4) {
+      const t = token as Tokens.Heading;
       toc.push({
-        level: match[1]!.length,
-        text: match[2]!.trim(),
-        id: generateUniqueId(match[2]!.trim(), usedIds),
+        level: t.depth,
+        text: t.text.trim(),
+        id: generateUniqueId(t.text.trim(), usedIds),
       });
     }
   }
-
   return toc;
+}
+
+export function extractToc(markdown: string): TocItem[] {
+  const m = new Marked();
+  return preWalkForToc(m, markdown.replace(/\r\n/g, '\n'));
 }
 
 export function renderToc(toc: TocItem[]): string {
@@ -247,36 +277,42 @@ export function renderToc(toc: TocItem[]): string {
 
   const minLevel = Math.min(...toc.map((item) => item.level));
   return toc
-    .map((item) => {
-      const relativeLevel = item.level - minLevel;
-      return (
-        `<a href="#${item.id}" class="toc-item toc-level-${item.level}" ` +
-        `data-level="${relativeLevel}">${item.text}</a>`
-      );
-    })
+    .map((item) =>
+      html`<a href="#${raw(item.id)}" class="toc-item toc-level-${item.level}" data-level="${item.level - minLevel}" title="${item.text}">${item.text}</a>`,
+    )
     .join('\n');
 }
 
 export function getMarkdownWithToc(filename: string): MarkdownResult | null {
-  const filepath = join(DOC_ROOT, filename);
-  if (!existsSync(filepath)) return null;
+  let filepath: string;
+  try {
+    filepath = safeResolve(DOC_ROOT, filename);
+  } catch (err) {
+    if (err instanceof PathTraversalError) return null;
+    throw err;
+  }
 
-  const content = readFileSync(filepath, 'utf-8');
+  let content: string;
+  try {
+    content = readFileSync(filepath, 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+
   const { frontmatter, body } = parseFrontmatter(content);
-  const toc = extractToc(body);
 
-  // Calculate line offset: if frontmatter exists, body starts after '---\n...\n---\n'
+  const ctx = createRenderContext();
+  const toc = preWalkForToc(ctx.marked, body);
+
   const lineOffset = frontmatter
-    ? content.slice(0, content.indexOf(body)).split('\n').length
+    ? content.slice(0, content.replace(/\r\n/g, '\n').indexOf(body)).split(/\r?\n/).length
     : 1;
 
-  // Reset per-render state
-  currentUsedIds = new Set<string>();
-  resetBlockLineQueue(body, lineOffset);
+  ctx.lineMapping.reset(body, lineOffset);
+  const renderedHtml = ctx.marked.parse(body) as string;
 
-  const html = marked.parse(body) as string;
-
-  return { html, toc, frontmatter, filePath: resolve(filepath) };
+  return { html: renderedHtml, toc, frontmatter, filePath: filepath };
 }
 
 export function renderFrontmatter(
@@ -289,18 +325,18 @@ export function renderFrontmatter(
       let displayValue: string;
       if (typeof value === 'boolean') {
         displayValue = value
-          ? '<span class="fm-bool fm-true">true</span>'
-          : '<span class="fm-bool fm-false">false</span>';
+          ? `<span class="fm-bool fm-true">true</span>`
+          : `<span class="fm-bool fm-false">false</span>`;
       } else if (value.includes(',')) {
         const tags = value
           .split(',')
-          .map((v) => `<code class="fm-code">${v.trim()}</code>`)
+          .map((v) => html`<code class="fm-code">${v.trim()}</code>`)
           .join('');
         displayValue = `<div class="fm-tags">${tags}</div>`;
       } else {
-        displayValue = `<span class="fm-value">${value}</span>`;
+        displayValue = html`<span class="fm-value">${value}</span>`;
       }
-      return `<div class="fm-item"><span class="fm-key">${key}</span>${displayValue}</div>`;
+      return html`<div class="fm-item"><span class="fm-key">${key}</span>${raw(displayValue)}</div>`;
     })
     .join('');
 
