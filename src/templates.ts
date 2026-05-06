@@ -571,7 +571,10 @@ export function getPreviewTemplate(
     ${admonitionStyles}
     ${themeToggleStyles}
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
+    /* Native trackpad/wheel scroll feels smoothest when the browser handles it
+     * without competing with a CSS-driven smooth animation. Anchor jumps that
+     * still want smooth motion can opt-in via scrollIntoView({behavior:'smooth'}). */
+    html { scroll-behavior: auto; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       line-height: 1.6;
@@ -581,7 +584,15 @@ export function getPreviewTemplate(
     body :focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; border-radius: 3px; }
     .page-layout { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
     .main-content { width: 100%; }
-    .sidebar { position: fixed; right: 0; top: 70px; z-index: 50; }
+    /* Fixed panels with shadows are promoted to their own compositor layer so
+     * the browser composites them on scroll rather than repainting the page
+     * area underneath their drop shadows every frame. */
+    .sidebar {
+      position: fixed; right: 0; top: 70px; z-index: 50;
+      transform: translateZ(0);
+      will-change: transform;
+      contain: layout paint style;
+    }
     .toc-container {
       background: var(--bg-sidebar);
       border-radius: 16px 0 0 16px;
@@ -675,7 +686,12 @@ export function getPreviewTemplate(
       font-size: 11px;
     }
     .fm-bool { display: inline-block; padding: 2px 10px; border-radius: 4px; font-weight: 500; font-size: 11px; }
-    .left-nav { position: fixed; left: 0; top: 70px; z-index: 50; }
+    .left-nav {
+      position: fixed; left: 0; top: 70px; z-index: 50;
+      transform: translateZ(0);
+      will-change: transform;
+      contain: layout paint style;
+    }
     .left-nav-container {
       background: var(--bg-sidebar);
       border-radius: 0 16px 16px 0;

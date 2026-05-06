@@ -24,6 +24,11 @@ export const canvasStyles = `
   flex-direction: row;
   gap: 8px;
   align-items: center;
+  /* Promote to its own compositor layer so the browser composites this on
+   * scroll instead of repainting its box-shadow against the moving content. */
+  transform: translateZ(0);
+  will-change: transform;
+  contain: layout style;
 }
 .anno-fab {
   width: 44px;
@@ -53,7 +58,8 @@ export const canvasStyles = `
   overflow: hidden;
 }
 .anno-fab-bar:hover > .anno-fab:not(:last-child),
-.anno-fab-bar:focus-within > .anno-fab:not(:last-child) {
+.anno-fab-bar:focus-within > .anno-fab:not(:last-child),
+.anno-fab-bar[data-expanded="true"] > .anno-fab:not(:last-child) {
   width: 44px;
   opacity: 1;
   transform: scale(1);
@@ -61,6 +67,9 @@ export const canvasStyles = `
   box-shadow: var(--shadow-lg);
   pointer-events: auto;
 }
+/* The anchor button at the end gets a subtle "available" cue */
+.anno-fab-anchor { color: var(--text-tertiary); }
+.anno-fab-anchor:hover { color: var(--link-color); }
 /* When canvas mode is active, keep the canvas FAB visible even without hover so
  * the user has a constant exit affordance. */
 .anno-fab-bar > .anno-fab[aria-pressed="true"] {
@@ -89,6 +98,11 @@ export const canvasStyles = `
   inset: 0;
   pointer-events: none;
   z-index: 9;
+  /* Promote SVG overlay to its own layer; otherwise scrolling repaints the
+   * full-document-height SVG every frame. */
+  transform: translateZ(0);
+  will-change: transform;
+  contain: layout paint style;
 }
 .canvas-host[data-active="true"] {
   pointer-events: auto;
@@ -241,6 +255,9 @@ export const canvasMarkup = `
   </button>
   <button type="button" class="anno-fab" data-fab="search" data-search-toggle aria-label="搜索文件 (⌘K)" title="搜索 (⌘K)">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+  </button>
+  <button type="button" class="anno-fab anno-fab-anchor" data-fab="toggle" aria-label="标注工具栏" aria-haspopup="true" aria-expanded="false" title="标注 / 画布工具栏">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="18" cy="12" r="2"/></svg>
   </button>
 </div>
 
@@ -582,7 +599,29 @@ export const canvasScript = `
       var which = fab.getAttribute('data-fab');
       if (which === 'canvas') { e.preventDefault(); toggle(); return; }
       if (which === 'clear')  { e.preventDefault(); clearAll(); return; }
-      // other FABs (e.g. data-fab="panel") fall through to their own handlers
+      if (which === 'toggle') {
+        e.preventDefault();
+        var bar = fab.closest('.anno-fab-bar');
+        if (bar) {
+          var open = bar.getAttribute('data-expanded') === 'true';
+          if (open) {
+            bar.removeAttribute('data-expanded');
+            fab.setAttribute('aria-expanded', 'false');
+          } else {
+            bar.setAttribute('data-expanded', 'true');
+            fab.setAttribute('aria-expanded', 'true');
+          }
+        }
+        return;
+      }
+      // other FABs (e.g. data-fab="panel" / "search") fall through to their own handlers
+    }
+    // Click outside the bar collapses any explicit-expanded state
+    var bar = document.querySelector('.anno-fab-bar[data-expanded="true"]');
+    if (bar && !bar.contains(t)) {
+      bar.removeAttribute('data-expanded');
+      var anchor = bar.querySelector('[data-fab="toggle"]');
+      if (anchor) anchor.setAttribute('aria-expanded', 'false');
     }
     if (!canvasToolbar) return;
     var tool = t.closest && t.closest('[data-canvas-tool]');

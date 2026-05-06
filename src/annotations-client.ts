@@ -42,6 +42,12 @@ export const annotationsStyles = `
   inset: 0;
   pointer-events: none;
   z-index: 4;
+  /* Compositor layer so the (potentially many) overlay rects are painted
+   * once into a layer and merely composited as the page scrolls. */
+  transform: translateZ(0);
+  will-change: transform;
+  contain: layout paint style;
+  overflow-anchor: none;
 }
 .anno-overlay {
   position: absolute;
@@ -100,6 +106,10 @@ export const annotationsStyles = `
   width: 56px;
   pointer-events: none;
   z-index: 6;
+  transform: translateZ(0);
+  will-change: transform;
+  contain: layout paint style;
+  overflow-anchor: none;
 }
 .anno-pin {
   position: absolute;

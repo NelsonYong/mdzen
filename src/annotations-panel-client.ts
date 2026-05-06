@@ -44,6 +44,8 @@ export const annotationsPanelStyles = `
   transition: transform 0.25s ease;
   display: flex;
   flex-direction: column;
+  will-change: transform;
+  contain: layout paint style;
 }
 .anno-panel[data-open="true"] { transform: translateX(0); }
 

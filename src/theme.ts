@@ -201,6 +201,8 @@ export const themeToggleStyles = `
   padding: 3px;
   transition: all 0.25s ease;
   cursor: default;
+  transform: translateZ(0);
+  will-change: transform;
 }
 .status-dot-light {
   width: 10px;
