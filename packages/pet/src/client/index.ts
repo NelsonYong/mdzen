@@ -1,6 +1,8 @@
 import { Sprite } from './sprite.ts';
 import { Loop } from './loop.ts';
 import { attachDrag } from './drag.ts';
+import { BubbleHost } from './bubble.ts';
+import { pickPreset } from './presets.ts';
 import { clampPoint, computeBound, type Rect } from './boundary.ts';
 
 declare global {
@@ -18,6 +20,7 @@ function start(): void {
 
   const sprite = new Sprite({ size: 72, zIndex: 9999, initialState: 'idle' });
   document.body.appendChild(sprite.el);
+  const bubble = new BubbleHost(sprite.el);
 
   const config = window.__MDZEN_PET_CONFIG__ ?? {};
   const excludeSelectors: string[] = config.excludeSelectors ?? [
@@ -54,6 +57,7 @@ function start(): void {
     onDragStart: () => {
       loop.freeze();
       sprite.setState('waiting');
+      bubble.show({ text: pickPreset('protest'), variant: 'protest' });
     },
     onDragMove: (x, y) => {
       const bound = computeBound({
@@ -74,6 +78,7 @@ function start(): void {
   window.__mdzenPet = {
     stop: () => {
       drag.destroy();
+      bubble.destroy();
       loop.stop();
       sprite.destroy();
       window.__mdzenPet = undefined;
