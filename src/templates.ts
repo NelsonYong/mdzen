@@ -2,6 +2,7 @@ import { editorLinkStyles, buildEditorLinkScript } from './editor-link.ts';
 import { themeStyles, themeInitScript, themeToggleButtons, themeToggleStyles, themeScript } from './theme.ts';
 import { escapeHtml, safeJsonForScript } from './utils/security.ts';
 import { EDITOR } from './config.ts';
+import { pet } from './pet-adapter.ts';
 import {
   copyCodeStyles,
   copyCodeScript,
@@ -531,6 +532,7 @@ export function getHtmlTemplate(title: string, content: string): string {
   ${hmrScript}
   ${themeScript}
   ${searchScript}
+  ${pet.scriptTag()}
 </body>
 </html>`;
 }
@@ -1016,6 +1018,7 @@ export function getPreviewTemplate(
     render(currentDir);
   })();
   </script>
+  ${pet.scriptTag()}
 </body>
 </html>`;
 }
