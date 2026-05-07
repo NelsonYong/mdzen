@@ -9,6 +9,8 @@ import { createStorage, type Storage } from './storage.ts';
 import { attachSseClient, dispatch, closeAll, type PetEvent } from './sse.ts';
 import { createPetAgent, type PetAgent } from './agent.ts';
 import { ProposalRegistry } from './proposals.ts';
+import { createEmotionStore, type EmotionStore } from './emotion-storage.ts';
+import { applyEvent, tickRecovery, type EmotionEvent } from './emotion.ts';
 
 const HERE_FILE = fileURLToPath(import.meta.url);
 const PKG_ROOT = resolve(dirname(HERE_FILE), '../..');
@@ -25,6 +27,7 @@ interface RuntimeState {
   silentMode: boolean;
   proposals: ProposalRegistry;
   workspaceRoot: string;
+  emotion: EmotionStore;
 }
 
 export function buildPet(opts: CreatePetOptions): Pet {
@@ -35,6 +38,7 @@ export function buildPet(opts: CreatePetOptions): Pet {
   const chatDir = opts.storage?.chatDir ?? resolve(homedir(), '.mdzen');
   const storage = silentMode ? null : createStorage({ chatDir, workspaceRoot: opts.workspaceRoot });
   const proposals = new ProposalRegistry({ ttlMs: 10 * 60_000 });
+  const emotion = createEmotionStore({ chatDir, workspaceRoot: opts.workspaceRoot });
   const agent = silentMode
     ? null
     : createPetAgent({
@@ -44,6 +48,7 @@ export function buildPet(opts: CreatePetOptions): Pet {
         model: opts.llm?.model,
         personality: opts.personality,
         proposals,
+        emotionStore: emotion,
       });
 
   const state: RuntimeState = {
@@ -53,6 +58,7 @@ export function buildPet(opts: CreatePetOptions): Pet {
     silentMode,
     proposals,
     workspaceRoot: opts.workspaceRoot,
+    emotion,
   };
 
   const matches = (req: IncomingMessage): boolean => {
@@ -64,6 +70,8 @@ export function buildPet(opts: CreatePetOptions): Pet {
       path === `${prefix}/chat` ||
       path === `${prefix}/history` ||
       path === `${prefix}/apply-edit` ||
+      path === `${prefix}/state` ||
+      path === `${prefix}/event` ||
       path.startsWith(`${prefix}/assets/`)
     );
   };
@@ -107,6 +115,12 @@ export function buildPet(opts: CreatePetOptions): Pet {
       }
       if (path === `${prefix}/apply-edit` && req.method === 'POST') {
         return await handleApplyEdit(state, req, res);
+      }
+      if (path === `${prefix}/state` && req.method === 'GET') {
+        return await handleGetState(state, res);
+      }
+      if (path === `${prefix}/event` && req.method === 'POST') {
+        return await handleEvent(state, req, res);
       }
       res.statusCode = 404;
       res.end();
@@ -210,6 +224,34 @@ async function handleChat(state: RuntimeState, req: IncomingMessage, res: Server
       dispatch(ev);
     }
   })();
+}
+
+async function handleGetState(state: RuntimeState, res: ServerResponse): Promise<void> {
+  const raw = await state.emotion.load();
+  const ticked = tickRecovery(raw, Date.now());
+  if (ticked !== raw) {
+    state.emotion.save(ticked).catch(() => {});
+  }
+  res.statusCode = 200;
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify(ticked));
+}
+
+async function handleEvent(state: RuntimeState, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = (await readJson(req)) as { event?: unknown; count?: unknown } | null;
+  const ev = typeof body?.event === 'string' ? body.event : '';
+  if (!ev) {
+    res.statusCode = 400;
+    res.end();
+    return;
+  }
+  const now = Date.now();
+  const ticked = tickRecovery(await state.emotion.load(), now);
+  const next = applyEvent(ticked, ev as EmotionEvent, now);
+  await state.emotion.save(next);
+  res.statusCode = 200;
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify(next));
 }
 
 async function handleApplyEdit(state: RuntimeState, req: IncomingMessage, res: ServerResponse): Promise<void> {

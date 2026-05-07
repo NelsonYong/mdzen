@@ -8,6 +8,8 @@ import type { ChatMessage } from './storage.ts';
 import { buildTools, type ToolContext } from './tools.ts';
 import { dispatch } from './sse.ts';
 import type { ProposalRegistry } from './proposals.ts';
+import type { EmotionStore } from './emotion-storage.ts';
+import { affectionZone, PRESET_PHRASES, tickRecovery } from './emotion.ts';
 
 const DEFAULT_PERSONALITY: PersonalityConfig = {
   name: '希莲',
@@ -24,6 +26,7 @@ export interface AgentDeps {
   model?: string;
   personality?: Partial<PersonalityConfig>;
   proposals?: ProposalRegistry;
+  emotionStore?: EmotionStore;
 }
 
 export interface PetAgent {
@@ -43,10 +46,23 @@ export function createPetAgent(deps: AgentDeps): PetAgent {
     streaming: true,
     configuration: deps.baseURL ? { baseURL: deps.baseURL } : undefined,
   });
-  const systemPrompt = buildSystemPrompt(personality, !!deps.proposals);
+  const baseSystemPrompt = buildSystemPrompt(personality, !!deps.proposals);
 
   return {
     async run(sessionId, history, userText) {
+      let systemPrompt = baseSystemPrompt;
+      if (deps.emotionStore) {
+        const raw = await deps.emotionStore.load();
+        const ticked = tickRecovery(raw, Date.now());
+        const zone = affectionZone(ticked.affection);
+        const fragments = [
+          `【基础情绪】${PRESET_PHRASES[zone]}`,
+        ];
+        if (ticked.contextualPhrase) {
+          fragments.push(`【此刻心境】${ticked.contextualPhrase}`);
+        }
+        systemPrompt = `${systemPrompt}\n\n${fragments.join('\n')}`;
+      }
       const ctx: ToolContext | undefined = deps.proposals
         ? {
             async proposeEdit(input) {
