@@ -11,6 +11,7 @@ import { attachCeremonial } from './triggers/ceremonial.ts';
 import { attachMischief } from './mischief.ts';
 import { peekOnLoad, attachDodgeClick } from './peek-dodge.ts';
 import { ChatHost } from './chat.ts';
+import { globalEmotion } from './emotion-client.ts';
 import { clampPoint, computeBound, type Rect } from './boundary.ts';
 
 declare global {
@@ -29,6 +30,9 @@ function start(): void {
   const sprite = new Sprite({ size: 72, zIndex: 9999, initialState: 'idle' });
   document.body.appendChild(sprite.el);
   const bubble = new BubbleHost(sprite.el);
+
+  void globalEmotion.refresh();
+  sprite.img.addEventListener('click', () => globalEmotion.emit('click'));
 
   const config = window.__MDZEN_PET_CONFIG__ ?? {};
   const excludeSelectors: string[] = config.excludeSelectors ?? [
@@ -79,6 +83,7 @@ function start(): void {
   });
   const dodge = attachDodgeClick(sprite, loop);
 
+  let dragCount = 0;
   let sessionId = sessionStorage.getItem('mdzen-pet-session');
   if (!sessionId) {
     sessionId = (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `s${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -98,6 +103,8 @@ function start(): void {
       loop.freeze();
       sprite.setState('waiting');
       bubble.show({ text: pickPreset('protest'), variant: 'protest' });
+      dragCount += 1;
+      globalEmotion.emit(dragCount >= 3 ? 'drag-3plus' : 'drag-1st');
     },
     onDragMove: (x, y) => {
       const bound = computeBound({

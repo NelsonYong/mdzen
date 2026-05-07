@@ -1,6 +1,7 @@
 import type { BubbleHost } from '../bubble.ts';
 import type { CooldownGate } from '../cooldown.ts';
 import { pickPreset } from '../presets.ts';
+import { globalEmotion } from '../emotion-client.ts';
 
 const MIN_SELECTION_LEN = 20;
 const DWELL_MS = 2000;
@@ -19,6 +20,7 @@ export function attachSelection(bubble: BubbleHost, gate: CooldownGate): { destr
     }
     if (text.length < MIN_SELECTION_LEN) return;
     dwellTimer = setTimeout(() => {
+      if (globalEmotion.shouldGateProbabilisticTrigger()) return;
       const now = performance.now();
       if (gate.tryFire('selection', COOLDOWN_MS, now, Math.random, PROBABILITY)) {
         bubble.show({ text: pickPreset('selection'), variant: 'chat-stub' });
