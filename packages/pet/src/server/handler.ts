@@ -99,6 +99,7 @@ export function buildPet(opts: CreatePetOptions): Pet {
       path === `${prefix}/state` ||
       path === `${prefix}/event` ||
       path === `${prefix}/signal` ||
+      path === `${prefix}/memory` ||
       path.startsWith(`${prefix}/assets/`)
     );
   };
