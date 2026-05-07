@@ -14,10 +14,17 @@ const STYLE_BY_VARIANT: Record<BubbleVariant, Partial<CSSStyleDeclaration>> = {
   'chat-stub': { background: '#fff', border: '1px solid #d06b9a', color: '#333', cursor: 'pointer' },
 };
 
+export interface StreamingBubble {
+  setText(text: string): void;
+  finish(durationMs?: number): void;
+  cancel(): void;
+}
+
 export class BubbleHost {
   private root: HTMLDivElement;
   private current: HTMLDivElement | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private streaming = false;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
@@ -33,27 +40,50 @@ export class BubbleHost {
   }
 
   show(spec: BubbleSpec): void {
+    if (this.streaming) return;
     this.dismiss();
+    this.current = this.createEl(spec.variant, spec.text, spec.onClick);
+    const dur = spec.durationMs ?? defaultDuration(spec);
+    this.timer = setTimeout(() => this.dismiss(), dur);
+  }
+
+  startStream(variant: BubbleVariant): StreamingBubble {
+    this.dismiss();
+    this.streaming = true;
+    const el = this.createEl(variant, '');
+    return {
+      setText: (text) => {
+        el.textContent = text;
+      },
+      finish: (durationMs) => {
+        const dur = durationMs ?? Math.min(15000, Math.max(4000, (el.textContent ?? '').length * 60));
+        this.timer = setTimeout(() => this.dismiss(), dur);
+      },
+      cancel: () => this.dismiss(),
+    };
+  }
+
+  private createEl(variant: BubbleVariant, text: string, onClick?: () => void): HTMLDivElement {
     const el = document.createElement('div');
     Object.assign(el.style, {
       padding: '6px 10px',
       borderRadius: '12px',
       fontSize: '12px',
       lineHeight: '1.4',
-      maxWidth: '180px',
+      maxWidth: '220px',
       whiteSpace: 'normal',
+      wordBreak: 'break-word',
       boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-      ...STYLE_BY_VARIANT[spec.variant],
+      ...STYLE_BY_VARIANT[variant],
     });
-    el.textContent = spec.text;
-    if (spec.onClick) {
+    el.textContent = text;
+    if (onClick) {
       el.style.cursor = 'pointer';
-      el.addEventListener('click', spec.onClick);
+      el.addEventListener('click', onClick);
     }
     this.root.appendChild(el);
     this.current = el;
-    const dur = spec.durationMs ?? defaultDuration(spec);
-    this.timer = setTimeout(() => this.dismiss(), dur);
+    return el;
   }
 
   dismiss(): void {
@@ -65,6 +95,7 @@ export class BubbleHost {
       this.current.remove();
       this.current = null;
     }
+    this.streaming = false;
   }
 
   destroy(): void {

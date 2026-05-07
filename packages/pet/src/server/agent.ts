@@ -115,23 +115,27 @@ export function createPetAgent(deps: AgentDeps): PetAgent {
 
       let acc = '';
       try {
-        const stream = await agent.stream({ messages });
-        for await (const chunk of stream) {
-          const agentChunk = (chunk as { agent?: { messages?: BaseMessage[] } }).agent;
-          const lastMsg = agentChunk?.messages?.[agentChunk.messages.length - 1];
-          const text = (lastMsg?.content as string | undefined) ?? '';
-          if (text && text !== acc) {
-            const delta = text.slice(acc.length);
-            acc = text;
-            dispatch({ type: 'token', sessionId, text: delta });
-          }
-          const toolsChunk = (chunk as { tools?: unknown }).tools;
-          if (toolsChunk) {
-            dispatch({ type: 'tool-end', sessionId, tool: 'tool' });
+        const stream = await agent.stream(
+          { messages },
+          { streamMode: 'messages' } as Record<string, unknown>,
+        );
+        for await (const chunk of stream as AsyncIterable<unknown>) {
+          let msg: unknown = chunk;
+          if (Array.isArray(chunk)) msg = chunk[0];
+          const m = msg as { content?: unknown; getType?: () => string } | undefined;
+          if (!m) continue;
+          const role = typeof m.getType === 'function' ? m.getType() : undefined;
+          if (role && role !== 'ai') continue;
+          const content = m.content;
+          const text = typeof content === 'string' ? content : '';
+          if (text) {
+            acc += text;
+            dispatch({ type: 'token', sessionId, text });
           }
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        console.error('[pet agent] stream error:', message);
         dispatch({ type: 'error', sessionId, message });
         throw err;
       }

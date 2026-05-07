@@ -10,8 +10,11 @@ import { attachIdle } from './triggers/idle.ts';
 import { attachCeremonial } from './triggers/ceremonial.ts';
 import { attachMischief } from './mischief.ts';
 import { peekOnLoad, attachDodgeClick } from './peek-dodge.ts';
-import { ChatHost } from './chat.ts';
 import { globalEmotion } from './emotion-client.ts';
+import { InputBar } from './input-bar.ts';
+import { PetSpeech } from './pet-speech.ts';
+import { SseConsumer, postChat } from './sse-consumer.ts';
+import { showDiffModal } from './diff-modal.ts';
 import { clampPoint, computeBound, type Rect } from './boundary.ts';
 
 declare global {
@@ -30,9 +33,9 @@ function start(): void {
   const sprite = new Sprite({ size: 72, zIndex: 9999, initialState: 'idle' });
   document.body.appendChild(sprite.el);
   const bubble = new BubbleHost(sprite.el);
+  const speech = new PetSpeech(sprite, bubble);
 
   void globalEmotion.refresh();
-  sprite.img.addEventListener('click', () => globalEmotion.emit('click'));
 
   const config = window.__MDZEN_PET_CONFIG__ ?? {};
   const excludeSelectors: string[] = config.excludeSelectors ?? [
@@ -86,10 +89,49 @@ function start(): void {
   let dragCount = 0;
   let sessionId = sessionStorage.getItem('mdzen-pet-session');
   if (!sessionId) {
-    sessionId = (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `s${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    sessionId =
+      typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `s${Date.now()}-${Math.random().toString(36).slice(2)}`;
     sessionStorage.setItem('mdzen-pet-session', sessionId);
   }
-  const chat = new ChatHost({ sprite, sessionId });
+
+  const inputBar = new InputBar({
+    placeholder: '想问什么? Enter 发送, Esc 关闭',
+    onSubmit: (text) => {
+      speech.acknowledge();
+      void (async () => {
+        const r = await postChat(sessionId!, text);
+        if (r.status === 503) {
+          speech.fail('没接 LLM');
+        } else if (r.status >= 400) {
+          speech.fail(`${r.status}`);
+        }
+      })();
+    },
+  });
+
+  sprite.img.addEventListener('click', (e: MouseEvent) => {
+    if (e.defaultPrevented) return;
+    globalEmotion.emit('click');
+    if (!globalEmotion.isHiding()) inputBar.toggle();
+  });
+
+  const sse = new SseConsumer(sessionId, {
+    onToken: (text) => speech.receiveToken(text),
+    onFinal: () => speech.finalize(),
+    onError: (message) => speech.fail(message),
+    onProposeEdit: (payload) => showDiffModal({
+      proposalId: payload.proposalId,
+      path: payload.path,
+      oldText: payload.oldText,
+      newText: payload.newText,
+      reason: payload.reason,
+    }),
+    onEditApplied: (payload) => {
+      bubble.show({ text: `✓ 已写入 ${payload.path}`, variant: 'passive', durationMs: 4000 });
+    },
+  });
 
   const gate = new CooldownGate({ globalMs: 30_000 });
   const selection = attachSelection(bubble, gate);
@@ -124,7 +166,8 @@ function start(): void {
 
   window.__mdzenPet = {
     stop: () => {
-      chat.destroy();
+      sse.destroy();
+      inputBar.destroy();
       selection.destroy();
       copy.destroy();
       idle.destroy();
