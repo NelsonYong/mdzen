@@ -1,4 +1,5 @@
 import type { Sprite } from './sprite.ts';
+import { showDiffModal } from './diff-modal.ts';
 
 const PREFIX = '/api/pet';
 
@@ -150,6 +151,17 @@ export class ChatHost {
         } else if (ev.type === 'final') {
           this.currentAssistant = null;
           this.opts.sprite.setState('idle');
+        } else if (ev.type === 'propose-edit') {
+          showDiffModal({
+            proposalId: ev.proposalId,
+            path: ev.path,
+            oldText: ev.oldText,
+            newText: ev.newText,
+            reason: ev.reason,
+            onApplied: () => this.append('system', `已应用修改: ${ev.path}`),
+          });
+        } else if (ev.type === 'edit-applied') {
+          this.append('system', `✓ 已写入 ${ev.path}`);
         } else if (ev.type === 'error') {
           this.append('system', `出错了: ${ev.message ?? ''}`);
           this.opts.sprite.setState('failed');
