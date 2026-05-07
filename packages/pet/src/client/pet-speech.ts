@@ -30,6 +30,8 @@ export class PetSpeech {
 
   private startThinking(): void {
     this.sprite.setState('review');
+    // Use a thought bubble with animated dots; the textContent is just placeholder
+    // for the bubble's auto-sizing — real animation comes from spans we splice in.
     this.bubble.show({ text: THINKING_TEXT, variant: 'thought', durationMs: 90_000 });
   }
 
