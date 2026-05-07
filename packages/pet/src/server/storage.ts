@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export interface ChatMessage {
@@ -17,6 +17,7 @@ export interface Storage {
   workspaceDir: string;
   appendMessage(sessionId: string, msg: ChatMessage): Promise<void>;
   loadHistory(sessionId: string): Promise<ChatMessage[]>;
+  clearHistory(sessionId: string): Promise<void>;
 }
 
 export function createStorage(opts: StorageOptions): Storage {
@@ -36,7 +37,14 @@ export function createStorage(opts: StorageOptions): Storage {
     return loadFile(file);
   }
 
-  return { workspaceDir, appendMessage, loadHistory };
+  async function clearHistory(sessionId: string): Promise<void> {
+    const file = join(workspaceDir, `${sanitize(sessionId)}.json`);
+    try {
+      await unlink(file);
+    } catch {}
+  }
+
+  return { workspaceDir, appendMessage, loadHistory, clearHistory };
 }
 
 async function loadFile(file: string): Promise<ChatMessage[]> {

@@ -152,6 +152,12 @@ export function buildPet(opts: CreatePetOptions): Pet {
       if (path === `${prefix}/signal` && req.method === 'POST') {
         return await handleSignal(req, res);
       }
+      if (path === `${prefix}/history` && req.method === 'DELETE') {
+        return await handleClearHistory(state, query, res);
+      }
+      if (path === `${prefix}/memory` && req.method === 'DELETE') {
+        return await handleClearMemory(state, res);
+      }
       res.statusCode = 404;
       res.end();
     } catch (err) {
@@ -286,6 +292,26 @@ async function handleEvent(state: RuntimeState, req: IncomingMessage, res: Serve
   res.statusCode = 200;
   res.setHeader('content-type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(next));
+}
+
+async function handleClearHistory(state: RuntimeState, query: URLSearchParams, res: ServerResponse): Promise<void> {
+  const sessionId = query.get('session') ?? '';
+  if (!sessionId) {
+    res.statusCode = 400;
+    res.end();
+    return;
+  }
+  if (state.storage) await state.storage.clearHistory(sessionId);
+  res.statusCode = 200;
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify({ ok: true }));
+}
+
+async function handleClearMemory(state: RuntimeState, res: ServerResponse): Promise<void> {
+  await state.memory.reset();
+  res.statusCode = 200;
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify({ ok: true }));
 }
 
 async function handleSignal(req: IncomingMessage, res: ServerResponse): Promise<void> {

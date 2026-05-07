@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -18,6 +18,7 @@ export interface MemoryStoreOptions {
 export interface MemoryStore {
   load(): Promise<PetMemory>;
   save(m: PetMemory): Promise<void>;
+  reset(): Promise<void>;
   filePath: string;
 }
 
@@ -47,6 +48,11 @@ export function createMemoryStore(opts: MemoryStoreOptions): MemoryStore {
       const tmp = `${filePath}.${Date.now()}.${process.pid}.tmp`;
       await writeFile(tmp, JSON.stringify(m, null, 2));
       await rename(tmp, filePath);
+    },
+    async reset() {
+      try {
+        await unlink(filePath);
+      } catch {}
     },
   };
 }
