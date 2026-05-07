@@ -17,6 +17,9 @@ import { PetSpeech } from './pet-speech.ts';
 import { SseConsumer, postChat } from './sse-consumer.ts';
 import { showDiffModal } from './diff-modal.ts';
 import { showHistoryModal } from './history-modal.ts';
+import { recordDrag } from './drag-log.ts';
+import { pickPreset } from './presets.ts';
+import { SignalReporter } from './signal.ts';
 import { clampPoint, computeBound, type Rect } from './boundary.ts';
 import type { FsmState } from '../shared/types.ts';
 
@@ -145,6 +148,9 @@ function start(): void {
     if (!globalEmotion.isHiding()) inputBar.toggle();
   });
 
+  const reporter = new SignalReporter(sessionId, deriveCurrentDoc);
+  reporter.start();
+
   const sse = new SseConsumer(sessionId, {
     onToken: (text) => speech.receiveToken(text),
     onFinal: () => speech.finalize(),
@@ -174,10 +180,36 @@ function start(): void {
     onDragStart: () => {
       loop.freeze();
       sprite.setState('waiting');
-      bubble.show({ text: mixedLine('protest'), variant: 'protest' });
-      dragCount += 1;
-      globalEmotion.emit(dragCount >= 3 ? 'drag-3plus' : 'drag-1st');
+      // Protest is deferred — see milestones below.
     },
+    milestones: [
+      {
+        atMs: 1500,
+        emit: () =>
+          bubble.show({
+            text: mixedLine('protest'),
+            variant: 'protest',
+            durationMs: 2000,
+          }),
+      },
+      {
+        atMs: 4500,
+        emit: () =>
+          bubble.show({
+            text: pickPreset('protest'),
+            variant: 'protest',
+            durationMs: 3000,
+          }),
+      },
+      {
+        atMs: 30_000,
+        emit: () => {
+          sprite.setState('waiting');
+          bubble.show({ text: '我有点晕…', variant: 'protest', durationMs: 4000 });
+          globalEmotion.emit('drag-too-long');
+        },
+      },
+    ],
     onDragMove: (x, y) => {
       const bound = computeBound({
         viewport: { w: window.innerWidth, h: window.innerHeight },
@@ -188,14 +220,26 @@ function start(): void {
       sprite.setPosition(clamped.x, clamped.y);
       loop.setPosition(clamped.x, clamped.y);
     },
-    onDragEnd: () => {
+    onDragEnd: (durationMs) => {
       sprite.setState('jumping');
       loop.unfreeze();
+      const { countInWindow } = recordDrag(durationMs);
+      dragCount = countInWindow;
+      // Affection penalty scales with both count-in-window and duration:
+      //   short drag, first occurrence -> drag-1st
+      //   3+ in 5min                    -> drag-3plus (cumulative annoyance)
+      //   any single drag > 30s         -> drag-too-long (already emitted in milestone)
+      if (countInWindow >= 3) {
+        globalEmotion.emit('drag-3plus');
+      } else {
+        globalEmotion.emit('drag-1st');
+      }
     },
   });
 
   window.__mdzenPet = {
     stop: () => {
+      reporter.stop();
       sse.destroy();
       inputBar.destroy();
       selection.destroy();

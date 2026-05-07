@@ -11,6 +11,8 @@ import { createPetAgent, type PetAgent } from './agent.ts';
 import { ProposalRegistry } from './proposals.ts';
 import { createEmotionStore, type EmotionStore } from './emotion-storage.ts';
 import { applyEvent, tickRecovery, type EmotionEvent } from './emotion.ts';
+import { createMemoryStore, type MemoryStore } from './memory.ts';
+import { recordSignal, startProactiveLoop, stopProactiveLoop } from './proactive.ts';
 
 const HERE_FILE = fileURLToPath(import.meta.url);
 const PKG_ROOT = resolve(dirname(HERE_FILE), '../..');
@@ -28,6 +30,8 @@ interface RuntimeState {
   proposals: ProposalRegistry;
   workspaceRoot: string;
   emotion: EmotionStore;
+  memory: MemoryStore;
+  stopProactive: () => void;
 }
 
 export function buildPet(opts: CreatePetOptions): Pet {
@@ -39,6 +43,7 @@ export function buildPet(opts: CreatePetOptions): Pet {
   const storage = silentMode ? null : createStorage({ chatDir, workspaceRoot: opts.workspaceRoot });
   const proposals = new ProposalRegistry({ ttlMs: 10 * 60_000 });
   const emotion = createEmotionStore({ chatDir, workspaceRoot: opts.workspaceRoot });
+  const memory = createMemoryStore({ chatDir, workspaceRoot: opts.workspaceRoot });
   const agent = silentMode
     ? null
     : createPetAgent({
@@ -49,6 +54,25 @@ export function buildPet(opts: CreatePetOptions): Pet {
         personality: opts.personality,
         proposals,
         emotionStore: emotion,
+        memoryStore: memory,
+      });
+
+  const stopProactive = silentMode
+    ? () => undefined
+    : startProactiveLoop({
+        apiKey,
+        baseURL: opts.llm?.baseURL,
+        model: opts.llm?.model,
+        personality: {
+          name: opts.personality?.name ?? '希莲',
+          pronoun: opts.personality?.pronoun ?? '我',
+          baseTone: opts.personality?.baseTone ?? 'gentle-girlish',
+          emojiPolicy: opts.personality?.emojiPolicy ?? 'sparing',
+          responseLength: opts.personality?.responseLength ?? 'short',
+        },
+        emotionStore: emotion,
+        memoryStore: memory,
+        storage: storage ?? undefined,
       });
 
   const state: RuntimeState = {
@@ -59,6 +83,8 @@ export function buildPet(opts: CreatePetOptions): Pet {
     proposals,
     workspaceRoot: opts.workspaceRoot,
     emotion,
+    memory,
+    stopProactive,
   };
 
   const matches = (req: IncomingMessage): boolean => {
@@ -72,6 +98,7 @@ export function buildPet(opts: CreatePetOptions): Pet {
       path === `${prefix}/apply-edit` ||
       path === `${prefix}/state` ||
       path === `${prefix}/event` ||
+      path === `${prefix}/signal` ||
       path.startsWith(`${prefix}/assets/`)
     );
   };
@@ -122,6 +149,9 @@ export function buildPet(opts: CreatePetOptions): Pet {
       if (path === `${prefix}/event` && req.method === 'POST') {
         return await handleEvent(state, req, res);
       }
+      if (path === `${prefix}/signal` && req.method === 'POST') {
+        return await handleSignal(req, res);
+      }
       res.statusCode = 404;
       res.end();
     } catch (err) {
@@ -137,6 +167,7 @@ export function buildPet(opts: CreatePetOptions): Pet {
   const scriptTag = (): string => `<script src="${prefix}/client.js" defer></script>`;
   const close = async (): Promise<void> => {
     closeAll();
+    state.stopProactive();
     state.clientCache = null;
   };
 
@@ -257,6 +288,26 @@ async function handleEvent(state: RuntimeState, req: IncomingMessage, res: Serve
   res.end(JSON.stringify(next));
 }
 
+async function handleSignal(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = (await readJson(req)) as
+    | { sessionId?: unknown; currentDoc?: unknown; selection?: unknown; lastActivityAgoSec?: unknown }
+    | null;
+  const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : '';
+  if (!sessionId) {
+    res.statusCode = 400;
+    res.end();
+    return;
+  }
+  recordSignal({
+    sessionId,
+    currentDoc: typeof body?.currentDoc === 'string' ? body.currentDoc : undefined,
+    selection: typeof body?.selection === 'string' ? body.selection : undefined,
+    lastActivityAgoSec: typeof body?.lastActivityAgoSec === 'number' ? body.lastActivityAgoSec : undefined,
+  });
+  res.statusCode = 204;
+  res.end();
+}
+
 async function handleApplyEdit(state: RuntimeState, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = (await readJson(req)) as { proposalId?: unknown } | null;
   const id = typeof body?.proposalId === 'string' ? body.proposalId : '';
@@ -309,7 +360,7 @@ async function handleApplyEdit(state: RuntimeState, req: IncomingMessage, res: S
   res.end(JSON.stringify({ ok: true }));
 }
 
-async function readJson(req: IncomingMessage): Promise<{ sessionId?: unknown; text?: unknown; proposalId?: unknown } | null> {
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown> | null> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req as AsyncIterable<Buffer>) {

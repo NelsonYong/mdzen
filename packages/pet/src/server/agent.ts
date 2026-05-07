@@ -11,6 +11,8 @@ import type { ProposalRegistry } from './proposals.ts';
 import type { EmotionStore } from './emotion-storage.ts';
 import { affectionZone, PRESET_PHRASES, tickRecovery } from './emotion.ts';
 import { generateContextualPhrase, shouldRegenerate } from './contextual.ts';
+import type { MemoryStore } from './memory.ts';
+import { maybeUpdateMemory } from './memory-updater.ts';
 
 const DEFAULT_PERSONALITY: PersonalityConfig = {
   name: '希莲',
@@ -28,6 +30,7 @@ export interface AgentDeps {
   personality?: Partial<PersonalityConfig>;
   proposals?: ProposalRegistry;
   emotionStore?: EmotionStore;
+  memoryStore?: MemoryStore;
 }
 
 export interface PetAgent {
@@ -71,6 +74,17 @@ export function createPetAgent(deps: AgentDeps): PetAgent {
       }
       if (context?.currentDoc) {
         systemPrompt = `${systemPrompt}\n\n【用户当前在看】${context.currentDoc}`;
+      }
+      if (deps.memoryStore) {
+        const mem = await deps.memoryStore.load();
+        const fragments: string[] = [];
+        if (mem.summary) fragments.push(`【关于这位用户的概要】${mem.summary}`);
+        if (mem.facts.length) {
+          fragments.push(
+            `【你记得的关于这位用户的事】\n${mem.facts.map((f) => `- ${f}`).join('\n')}`,
+          );
+        }
+        if (fragments.length) systemPrompt = `${systemPrompt}\n\n${fragments.join('\n\n')}`;
       }
       const ctx: ToolContext | undefined = deps.proposals
         ? {
@@ -148,6 +162,19 @@ export function createPetAgent(deps: AgentDeps): PetAgent {
         throw err;
       }
       dispatch({ type: 'final', sessionId, messageId: `${Date.now()}` });
+
+      if (deps.memoryStore) {
+        void maybeUpdateMemory(
+          {
+            apiKey: deps.apiKey,
+            baseURL: deps.baseURL,
+            model: deps.model,
+            personality,
+            store: deps.memoryStore,
+          },
+          [...history, { role: 'user', content: userText, timestamp: Date.now() }, { role: 'assistant', content: acc, timestamp: Date.now() }],
+        ).catch(() => {});
+      }
 
       if (deps.emotionStore) {
         void (async () => {

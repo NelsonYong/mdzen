@@ -1,6 +1,7 @@
 import type { Sprite } from './sprite.ts';
 import type { BubbleHost, StreamingBubble } from './bubble.ts';
 import { globalBusy } from './busy.ts';
+import { showReaderPanel, type ReaderHandle } from './reader-panel.ts';
 
 const ACK_LINES = ['看到啦~', '我看到了', '收到', '嗯, 听到啦'];
 const THINKING_TEXT = '让我想想...';
@@ -13,6 +14,7 @@ export class PetSpeech {
   private stream: StreamingBubble | null = null;
   private ackTimer: ReturnType<typeof setTimeout> | null = null;
   private thinkingTimer: ReturnType<typeof setTimeout> | null = null;
+  private reader: ReaderHandle | null = null;
 
   constructor(sprite: Sprite, bubble: BubbleHost) {
     this.sprite = sprite;
@@ -46,10 +48,24 @@ export class PetSpeech {
     const visible = stripThinkBlocks(this.rawBuffer);
     if (!visible) return;
     if (!this.stream) {
+      globalBusy.set(true);
       this.sprite.setState('review');
-      this.stream = this.bubble.startStream('passive');
+      this.stream = this.bubble.startStream('passive', {
+        onExpand: () => this.expandToReader(),
+      });
     }
     this.stream.setText(visible);
+    if (this.reader) this.reader.setText(visible);
+  }
+
+  expandToReader(): void {
+    const visible = stripThinkBlocks(this.rawBuffer);
+    if (!visible) return;
+    if (this.reader) {
+      this.reader.setText(visible);
+      return;
+    }
+    this.reader = showReaderPanel(visible, { title: '· 卷轴 ·' });
   }
 
   finalize(): void {
@@ -94,6 +110,10 @@ export class PetSpeech {
     if (this.stream) {
       this.stream.cancel();
       this.stream = null;
+    }
+    if (this.reader) {
+      this.reader.close();
+      this.reader = null;
     }
     this.rawBuffer = '';
   }
