@@ -11,7 +11,7 @@ export interface SpriteOptions {
 
 export class Sprite {
   readonly el: HTMLDivElement;
-  private img: HTMLImageElement;
+  readonly img: HTMLImageElement;
   private state: FsmState;
   private facing: 'left' | 'right' = 'right';
 

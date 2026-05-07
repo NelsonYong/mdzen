@@ -1,6 +1,7 @@
 import { Sprite } from './sprite.ts';
 import { Loop } from './loop.ts';
-import type { Rect } from './boundary.ts';
+import { attachDrag } from './drag.ts';
+import { clampPoint, computeBound, type Rect } from './boundary.ts';
 
 declare global {
   interface Window {
@@ -48,8 +49,31 @@ function start(): void {
   });
   loop.start();
 
+  const drag = attachDrag({
+    trigger: sprite.img,
+    onDragStart: () => {
+      loop.freeze();
+      sprite.setState('waiting');
+    },
+    onDragMove: (x, y) => {
+      const bound = computeBound({
+        viewport: { w: window.innerWidth, h: window.innerHeight },
+        excluded: getExcluded(),
+        padding,
+      });
+      const clamped = clampPoint({ x, y }, bound);
+      sprite.setPosition(clamped.x, clamped.y);
+      loop.setPosition(clamped.x, clamped.y);
+    },
+    onDragEnd: () => {
+      sprite.setState('jumping');
+      loop.unfreeze();
+    },
+  });
+
   window.__mdzenPet = {
     stop: () => {
+      drag.destroy();
       loop.stop();
       sprite.destroy();
       window.__mdzenPet = undefined;

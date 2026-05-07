@@ -25,6 +25,7 @@ export class Loop {
   private stateExpiresAt = 0;
   private rafHandle = 0;
   private rng: () => number;
+  private frozen = false;
 
   constructor(private opts: LoopOptions) {
     this.rng = opts.rng ?? Math.random;
@@ -48,6 +49,19 @@ export class Loop {
     cancelAnimationFrame(this.rafHandle);
   }
 
+  freeze(): void {
+    this.frozen = true;
+    this.target = null;
+  }
+
+  unfreeze(): void {
+    this.frozen = false;
+  }
+
+  setPosition(x: number, y: number): void {
+    this.pos = { x, y };
+  }
+
   private bound(): Rect {
     return computeBound({
       viewport: this.opts.getViewport(),
@@ -57,6 +71,7 @@ export class Loop {
   }
 
   private tick(now: number, dt: number): void {
+    if (this.frozen) return;
     if (now >= this.nextTickAt) {
       this.nextTickAt = now + FSM_TICK_MS;
       const next = rollAutonomousTransition({ current: this.state, random: this.rng() });
