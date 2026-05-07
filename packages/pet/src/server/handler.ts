@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { resolve, basename, dirname } from 'node:path';
+import { readFile, writeFile, rename } from 'node:fs/promises';
+import { resolve, basename, dirname, relative, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -8,6 +8,7 @@ import { ALL_GIFS } from '../shared/types.ts';
 import { createStorage, type Storage } from './storage.ts';
 import { attachSseClient, dispatch, closeAll, type PetEvent } from './sse.ts';
 import { createPetAgent, type PetAgent } from './agent.ts';
+import { ProposalRegistry } from './proposals.ts';
 
 const HERE_FILE = fileURLToPath(import.meta.url);
 const PKG_ROOT = resolve(dirname(HERE_FILE), '../..');
@@ -22,6 +23,8 @@ interface RuntimeState {
   storage: Storage | null;
   agent: PetAgent | null;
   silentMode: boolean;
+  proposals: ProposalRegistry;
+  workspaceRoot: string;
 }
 
 export function buildPet(opts: CreatePetOptions): Pet {
@@ -31,6 +34,7 @@ export function buildPet(opts: CreatePetOptions): Pet {
 
   const chatDir = opts.storage?.chatDir ?? resolve(homedir(), '.mdzen');
   const storage = silentMode ? null : createStorage({ chatDir, workspaceRoot: opts.workspaceRoot });
+  const proposals = new ProposalRegistry({ ttlMs: 10 * 60_000 });
   const agent = silentMode
     ? null
     : createPetAgent({
@@ -39,9 +43,17 @@ export function buildPet(opts: CreatePetOptions): Pet {
         baseURL: opts.llm?.baseURL,
         model: opts.llm?.model,
         personality: opts.personality,
+        proposals,
       });
 
-  const state: RuntimeState = { clientCache: null, storage, agent, silentMode };
+  const state: RuntimeState = {
+    clientCache: null,
+    storage,
+    agent,
+    silentMode,
+    proposals,
+    workspaceRoot: opts.workspaceRoot,
+  };
 
   const matches = (req: IncomingMessage): boolean => {
     const url = req.url ?? '';
@@ -51,6 +63,7 @@ export function buildPet(opts: CreatePetOptions): Pet {
       path === `${prefix}/sse` ||
       path === `${prefix}/chat` ||
       path === `${prefix}/history` ||
+      path === `${prefix}/apply-edit` ||
       path.startsWith(`${prefix}/assets/`)
     );
   };
@@ -91,6 +104,9 @@ export function buildPet(opts: CreatePetOptions): Pet {
       }
       if (path === `${prefix}/chat` && req.method === 'POST') {
         return await handleChat(state, req, res);
+      }
+      if (path === `${prefix}/apply-edit` && req.method === 'POST') {
+        return await handleApplyEdit(state, req, res);
       }
       res.statusCode = 404;
       res.end();
@@ -196,7 +212,59 @@ async function handleChat(state: RuntimeState, req: IncomingMessage, res: Server
   })();
 }
 
-async function readJson(req: IncomingMessage): Promise<{ sessionId?: unknown; text?: unknown } | null> {
+async function handleApplyEdit(state: RuntimeState, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = (await readJson(req)) as { proposalId?: unknown } | null;
+  const id = typeof body?.proposalId === 'string' ? body.proposalId : '';
+  if (!id) {
+    res.statusCode = 400;
+    res.end();
+    return;
+  }
+  const p = state.proposals.consume(id, Date.now());
+  if (!p) {
+    res.statusCode = 404;
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ error: '提议不存在或已过期' }));
+    return;
+  }
+  const target = resolve(state.workspaceRoot, p.path);
+  const rel = relative(state.workspaceRoot, target);
+  if (rel === '' || rel.startsWith('..') || rel.startsWith('/') || extname(target) !== '.md') {
+    res.statusCode = 422;
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ error: '路径无效' }));
+    return;
+  }
+
+  let content: string;
+  try {
+    content = await readFile(target, 'utf-8');
+  } catch {
+    res.statusCode = 422;
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ error: '文件读取失败' }));
+    return;
+  }
+  if (!content.includes(p.oldText)) {
+    res.statusCode = 422;
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ error: '文件已被改动, 请让她重新看一遍' }));
+    return;
+  }
+  const updated = content.replace(p.oldText, p.newText);
+  const tmp = `${target}.${Date.now()}.${process.pid}.tmp`;
+  await writeFile(tmp, updated);
+  await rename(tmp, target);
+
+  const ev: PetEvent = { type: 'edit-applied', sessionId: p.sessionId, proposalId: id, path: p.path };
+  dispatch(ev);
+
+  res.statusCode = 200;
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify({ ok: true }));
+}
+
+async function readJson(req: IncomingMessage): Promise<{ sessionId?: unknown; text?: unknown; proposalId?: unknown } | null> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req as AsyncIterable<Buffer>) {
