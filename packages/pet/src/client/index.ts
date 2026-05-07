@@ -11,11 +11,14 @@ import { attachCeremonial } from './triggers/ceremonial.ts';
 import { attachMischief } from './mischief.ts';
 import { peekOnLoad, attachDodgeClick } from './peek-dodge.ts';
 import { globalEmotion } from './emotion-client.ts';
+import { globalBusy } from './busy.ts';
 import { InputBar } from './input-bar.ts';
 import { PetSpeech } from './pet-speech.ts';
 import { SseConsumer, postChat } from './sse-consumer.ts';
 import { showDiffModal } from './diff-modal.ts';
+import { showHistoryModal } from './history-modal.ts';
 import { clampPoint, computeBound, type Rect } from './boundary.ts';
+import type { FsmState } from '../shared/types.ts';
 
 declare global {
   interface Window {
@@ -25,6 +28,16 @@ declare global {
       padding?: number;
     };
   }
+}
+
+const CLICK_REACTIONS: FsmState[] = ['waving', 'jumping', 'waiting'];
+
+function deriveCurrentDoc(): string | undefined {
+  const path = window.location.pathname;
+  const m = /^\/view\/(.+)$/.exec(path);
+  if (m) return decodeURIComponent(m[1] ?? '');
+  if (path === '/' || path === '') return undefined;
+  return path;
 }
 
 function start(): void {
@@ -101,7 +114,7 @@ function start(): void {
     onSubmit: (text) => {
       speech.acknowledge();
       void (async () => {
-        const r = await postChat(sessionId!, text);
+        const r = await postChat(sessionId!, text, { currentDoc: deriveCurrentDoc() });
         if (r.status === 503) {
           speech.fail('没接 LLM');
         } else if (r.status >= 400) {
@@ -109,11 +122,26 @@ function start(): void {
         }
       })();
     },
+    onOpenHistory: () => void showHistoryModal(sessionId!),
   });
 
+  // Click reaction: cycle a small action AND toggle input bar.
+  // dodge.attachDodgeClick already steals 15% of clicks (calls preventDefault);
+  // when she dodges, this handler short-circuits.
+  let lastReactionIdx = -1;
   sprite.img.addEventListener('click', (e: MouseEvent) => {
     if (e.defaultPrevented) return;
+    if (globalBusy.isBusy()) return;
     globalEmotion.emit('click');
+
+    let next: FsmState;
+    do {
+      next = CLICK_REACTIONS[Math.floor(Math.random() * CLICK_REACTIONS.length)] ?? 'waving';
+    } while (CLICK_REACTIONS.length > 1 && CLICK_REACTIONS.indexOf(next) === lastReactionIdx);
+    lastReactionIdx = CLICK_REACTIONS.indexOf(next);
+    sprite.setState(next);
+    setTimeout(() => sprite.setState('idle'), 1100);
+
     if (!globalEmotion.isHiding()) inputBar.toggle();
   });
 
@@ -121,13 +149,14 @@ function start(): void {
     onToken: (text) => speech.receiveToken(text),
     onFinal: () => speech.finalize(),
     onError: (message) => speech.fail(message),
-    onProposeEdit: (payload) => showDiffModal({
-      proposalId: payload.proposalId,
-      path: payload.path,
-      oldText: payload.oldText,
-      newText: payload.newText,
-      reason: payload.reason,
-    }),
+    onProposeEdit: (payload) =>
+      showDiffModal({
+        proposalId: payload.proposalId,
+        path: payload.path,
+        oldText: payload.oldText,
+        newText: payload.newText,
+        reason: payload.reason,
+      }),
     onEditApplied: (payload) => {
       bubble.show({ text: `✓ 已写入 ${payload.path}`, variant: 'passive', durationMs: 4000 });
     },
@@ -141,6 +170,7 @@ function start(): void {
 
   const drag = attachDrag({
     trigger: sprite.img,
+    isBlocked: () => globalBusy.isBusy(),
     onDragStart: () => {
       loop.freeze();
       sprite.setState('waiting');

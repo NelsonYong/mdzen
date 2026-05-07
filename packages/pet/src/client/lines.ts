@@ -1,12 +1,8 @@
 import { pickPreset, type PresetCategory } from './presets.ts';
-import { globalEmotion } from './emotion-client.ts';
 
-const CONTEXTUAL_USE_PROB = 0.4;
-
+// Bubble lines stay first-person from the pet's mouth. The server-side
+// contextualPhrase is third-person ("她有点不安"), suitable only for the
+// LLM system prompt — never for bubble display.
 export function mixedLine(category: PresetCategory): string {
-  const phrase = globalEmotion.contextualPhrase();
-  if (phrase && Math.random() < CONTEXTUAL_USE_PROB) {
-    return phrase;
-  }
   return pickPreset(category);
 }

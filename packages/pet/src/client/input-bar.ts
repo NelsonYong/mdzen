@@ -1,13 +1,19 @@
+import { globalBusy } from './busy.ts';
+
 export interface InputBarOptions {
   placeholder?: string;
   onSubmit: (text: string) => void;
+  onOpenHistory: () => void;
 }
 
 export class InputBar {
   private root: HTMLDivElement;
   private input: HTMLInputElement;
+  private send: HTMLButtonElement;
+  private history: HTMLButtonElement;
   private isOpen = false;
   private opts: InputBarOptions;
+  private unsubscribeBusy: () => void;
 
   constructor(opts: InputBarOptions) {
     this.opts = opts;
@@ -26,8 +32,9 @@ export class InputBar {
       padding: '10px 12px',
       display: 'flex',
       alignItems: 'center',
-      gap: '10px',
-      fontFamily: 'system-ui, -apple-system, sans-serif',
+      gap: '8px',
+      fontFamily:
+        '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif',
       fontSize: '13px',
       opacity: '0',
       pointerEvents: 'none',
@@ -37,6 +44,9 @@ export class InputBar {
     const star = document.createElement('div');
     star.textContent = '🐾';
     Object.assign(star.style, { fontSize: '18px', flexShrink: '0' });
+
+    this.history = makeIconButton('📜', '查看历史');
+    this.history.addEventListener('click', () => this.opts.onOpenHistory());
 
     this.input = document.createElement('input');
     this.input.type = 'text';
@@ -52,10 +62,10 @@ export class InputBar {
       padding: '6px 4px',
     });
 
-    const send = document.createElement('button');
-    send.setAttribute('aria-label', 'send');
-    send.textContent = '↑';
-    Object.assign(send.style, {
+    this.send = document.createElement('button');
+    this.send.setAttribute('aria-label', 'send');
+    this.send.textContent = '↑';
+    Object.assign(this.send.style, {
       width: '32px',
       height: '32px',
       borderRadius: '8px',
@@ -66,12 +76,13 @@ export class InputBar {
       fontSize: '16px',
       fontWeight: 'bold',
       flexShrink: '0',
-      transition: 'background 120ms ease',
+      transition: 'background 120ms ease, opacity 120ms ease',
     });
 
     this.root.appendChild(star);
+    this.root.appendChild(this.history);
     this.root.appendChild(this.input);
-    this.root.appendChild(send);
+    this.root.appendChild(this.send);
     document.body.appendChild(this.root);
 
     this.input.addEventListener('keydown', (e) => {
@@ -82,9 +93,23 @@ export class InputBar {
         this.close();
       }
     });
-    send.addEventListener('click', () => this.submit());
+    this.send.addEventListener('click', () => this.submit());
 
     document.addEventListener('mousedown', this.handleOutsideClick);
+
+    this.unsubscribeBusy = globalBusy.onChange((busy) => this.applyBusy(busy));
+    this.applyBusy(globalBusy.isBusy());
+  }
+
+  private applyBusy(busy: boolean): void {
+    this.input.disabled = busy;
+    this.send.disabled = busy;
+    this.send.style.opacity = busy ? '0.45' : '1';
+    this.send.style.cursor = busy ? 'not-allowed' : 'pointer';
+    this.input.style.opacity = busy ? '0.6' : '1';
+    this.input.placeholder = busy
+      ? '她正在回应中...'
+      : (this.opts.placeholder ?? '问我点什么...');
   }
 
   private handleOutsideClick = (e: MouseEvent): void => {
@@ -100,6 +125,7 @@ export class InputBar {
   }
 
   private submit(): void {
+    if (globalBusy.isBusy()) return;
     const text = this.input.value.trim();
     if (!text) return;
     this.input.value = '';
@@ -112,7 +138,9 @@ export class InputBar {
     this.root.style.opacity = '1';
     this.root.style.pointerEvents = 'auto';
     this.root.style.transform = 'translate(-50%, 0)';
-    requestAnimationFrame(() => this.input.focus());
+    requestAnimationFrame(() => {
+      if (!this.input.disabled) this.input.focus();
+    });
   }
 
   close(): void {
@@ -130,7 +158,34 @@ export class InputBar {
   }
 
   destroy(): void {
+    this.unsubscribeBusy();
     document.removeEventListener('mousedown', this.handleOutsideClick);
     this.root.remove();
   }
+}
+
+function makeIconButton(icon: string, label: string): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.setAttribute('aria-label', label);
+  b.title = label;
+  b.textContent = icon;
+  Object.assign(b.style, {
+    width: '32px',
+    height: '32px',
+    borderRadius: '8px',
+    border: 'none',
+    background: 'transparent',
+    color: '#cdcdcd',
+    cursor: 'pointer',
+    fontSize: '14px',
+    flexShrink: '0',
+    transition: 'background 120ms ease',
+  });
+  b.addEventListener('mouseenter', () => {
+    b.style.background = 'rgba(255,255,255,0.08)';
+  });
+  b.addEventListener('mouseleave', () => {
+    b.style.background = 'transparent';
+  });
+  return b;
 }

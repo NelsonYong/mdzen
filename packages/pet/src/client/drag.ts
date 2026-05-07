@@ -5,6 +5,7 @@ export interface DragOptions {
   onDragStart: () => void;
   onDragMove: (x: number, y: number) => void;
   onDragEnd: () => void;
+  isBlocked?: () => boolean;
 }
 
 export interface DragController {
@@ -19,12 +20,14 @@ export function attachDrag(opts: DragOptions): DragController {
 
   const onMouseDown = (e: MouseEvent): void => {
     if (e.button !== 0) return;
+    if (opts.isBlocked?.()) return;
     e.preventDefault();
     const rect = opts.trigger.getBoundingClientRect();
     grabOffsetX = e.clientX - rect.left;
     grabOffsetY = e.clientY - rect.top;
     timer = setTimeout(() => {
       timer = null;
+      if (opts.isBlocked?.()) return;
       dragging = true;
       opts.onDragStart();
     }, LONG_PRESS_MS);

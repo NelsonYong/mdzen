@@ -1,5 +1,6 @@
 import type { Sprite } from './sprite.ts';
 import type { BubbleHost, StreamingBubble } from './bubble.ts';
+import { globalBusy } from './busy.ts';
 
 const ACK_LINES = ['看到啦~', '我看到了', '收到', '嗯, 听到啦'];
 const THINKING_TEXT = '让我想想...';
@@ -20,6 +21,7 @@ export class PetSpeech {
 
   acknowledge(): void {
     this.cancel();
+    globalBusy.set(true);
     const line = ACK_LINES[Math.floor(Math.random() * ACK_LINES.length)] ?? ACK_LINES[0]!;
     this.bubble.show({ text: line, variant: 'passive', durationMs: 1200 });
     this.ackTimer = setTimeout(() => {
@@ -57,7 +59,6 @@ export class PetSpeech {
     }
     const visible = stripThinkBlocks(this.rawBuffer);
     if (!this.stream) {
-      // No real content was streamed (LLM produced only think block, or empty)
       this.bubble.dismiss();
     } else {
       this.stream.setText(visible || '...');
@@ -66,6 +67,7 @@ export class PetSpeech {
     }
     this.rawBuffer = '';
     this.sprite.setState('idle');
+    globalBusy.set(false);
   }
 
   fail(message?: string): void {
@@ -77,6 +79,7 @@ export class PetSpeech {
       durationMs: 4000,
     });
     setTimeout(() => this.sprite.setState('idle'), 2000);
+    globalBusy.set(false);
   }
 
   cancel(): void {

@@ -47,11 +47,20 @@ export async function generateContextualPhrase(
 
   try {
     const res = await llm.invoke([sys, new HumanMessage('生成')]);
-    const text = ((res?.content as string | undefined) ?? '').trim();
-    return text.slice(0, 60);
+    const raw = ((res?.content as string | undefined) ?? '').trim();
+    return stripThinkBlocks(raw).slice(0, 60);
   } catch {
     return '';
   }
+}
+
+function stripThinkBlocks(s: string): string {
+  let out = s.replace(/<think>[\s\S]*?<\/think>/g, '');
+  const open = out.lastIndexOf('<think>');
+  if (open >= 0 && out.indexOf('</think>', open) < 0) {
+    out = out.slice(0, open);
+  }
+  return out.trim();
 }
 
 export function shouldRegenerate(

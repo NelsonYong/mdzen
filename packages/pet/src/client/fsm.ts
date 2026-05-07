@@ -6,11 +6,12 @@ export interface FsmTickInput {
 }
 
 const AUTONOMOUS_TABLE: ReadonlyArray<{ threshold: number; pick: (r: number) => FsmState }> = [
-  { threshold: 0.40, pick: () => 'idle' },
-  { threshold: 0.65, pick: (r) => (r < 0.525 ? 'walk-left' : 'walk-right') },
-  { threshold: 0.80, pick: () => 'wandering' },
-  { threshold: 0.90, pick: () => 'jumping' },
-  { threshold: 0.98, pick: () => 'waiting' },
+  // Calmer than before — she stays still ~70% of ticks, walks rarely.
+  { threshold: 0.70, pick: () => 'idle' },
+  { threshold: 0.80, pick: (r) => (r < 0.75 ? 'walk-left' : 'walk-right') },
+  { threshold: 0.86, pick: () => 'wandering' },
+  { threshold: 0.92, pick: () => 'jumping' },
+  { threshold: 0.99, pick: () => 'waiting' },
   { threshold: 1.00, pick: () => 'running' },
 ];
 

@@ -31,7 +31,12 @@ export interface AgentDeps {
 }
 
 export interface PetAgent {
-  run(sessionId: string, history: ChatMessage[], userText: string): Promise<string>;
+  run(
+    sessionId: string,
+    history: ChatMessage[],
+    userText: string,
+    context?: { currentDoc?: string },
+  ): Promise<string>;
 }
 
 function isInside(root: string, path: string): boolean {
@@ -50,7 +55,7 @@ export function createPetAgent(deps: AgentDeps): PetAgent {
   const baseSystemPrompt = buildSystemPrompt(personality, !!deps.proposals);
 
   return {
-    async run(sessionId, history, userText) {
+    async run(sessionId, history, userText, context) {
       let systemPrompt = baseSystemPrompt;
       if (deps.emotionStore) {
         const raw = await deps.emotionStore.load();
@@ -63,6 +68,9 @@ export function createPetAgent(deps: AgentDeps): PetAgent {
           fragments.push(`【此刻心境】${ticked.contextualPhrase}`);
         }
         systemPrompt = `${systemPrompt}\n\n${fragments.join('\n')}`;
+      }
+      if (context?.currentDoc) {
+        systemPrompt = `${systemPrompt}\n\n【用户当前在看】${context.currentDoc}`;
       }
       const ctx: ToolContext | undefined = deps.proposals
         ? {

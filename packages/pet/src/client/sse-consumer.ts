@@ -60,12 +60,13 @@ export class SseConsumer {
 export async function postChat(
   sessionId: string,
   text: string,
+  context?: { currentDoc?: string },
   prefix = '/api/pet',
 ): Promise<{ status: number; data: unknown }> {
   const r = await fetch(`${prefix}/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionId, text }),
+    body: JSON.stringify({ sessionId, text, ...(context ?? {}) }),
   });
   let data: unknown = null;
   try {

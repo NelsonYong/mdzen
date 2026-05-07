@@ -4,7 +4,7 @@ import { computeBound, clampPoint, type Rect } from './boundary.ts';
 import { stepToward, facingFromDelta, type Facing } from './motion.ts';
 import type { Sprite } from './sprite.ts';
 
-const FSM_TICK_MS = 10000;
+const FSM_TICK_MS = 18000;
 const SPEED_WALK = 90;
 const SPEED_RUN = 380;
 

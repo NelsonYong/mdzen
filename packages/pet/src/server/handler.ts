@@ -195,9 +195,12 @@ async function handleChat(state: RuntimeState, req: IncomingMessage, res: Server
     return;
   }
 
-  const body = await readJson(req);
+  const body = (await readJson(req)) as
+    | { sessionId?: unknown; text?: unknown; currentDoc?: unknown }
+    | null;
   const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : '';
   const text = typeof body?.text === 'string' ? body.text : '';
+  const currentDoc = typeof body?.currentDoc === 'string' ? body.currentDoc : undefined;
   if (!sessionId || !text) {
     res.statusCode = 400;
     res.end();
@@ -216,7 +219,7 @@ async function handleChat(state: RuntimeState, req: IncomingMessage, res: Server
     try {
       const history = await storage.loadHistory(sessionId);
       const past = history.slice(0, Math.max(0, history.length - 1));
-      const reply = await agent.run(sessionId, past, text);
+      const reply = await agent.run(sessionId, past, text, currentDoc ? { currentDoc } : undefined);
       await storage.appendMessage(sessionId, { role: 'assistant', content: reply, timestamp: Date.now() });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
