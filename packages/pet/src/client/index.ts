@@ -10,6 +10,7 @@ import { attachIdle } from './triggers/idle.ts';
 import { attachCeremonial } from './triggers/ceremonial.ts';
 import { attachMischief } from './mischief.ts';
 import { peekOnLoad, attachDodgeClick } from './peek-dodge.ts';
+import { ChatHost } from './chat.ts';
 import { clampPoint, computeBound, type Rect } from './boundary.ts';
 
 declare global {
@@ -78,6 +79,13 @@ function start(): void {
   });
   const dodge = attachDodgeClick(sprite, loop);
 
+  let sessionId = sessionStorage.getItem('mdzen-pet-session');
+  if (!sessionId) {
+    sessionId = (typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `s${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    sessionStorage.setItem('mdzen-pet-session', sessionId);
+  }
+  const chat = new ChatHost({ sprite, sessionId });
+
   const gate = new CooldownGate({ globalMs: 30_000 });
   const selection = attachSelection(bubble, gate);
   const copy = attachCopy(bubble, gate);
@@ -109,6 +117,7 @@ function start(): void {
 
   window.__mdzenPet = {
     stop: () => {
+      chat.destroy();
       selection.destroy();
       copy.destroy();
       idle.destroy();

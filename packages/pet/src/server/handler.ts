@@ -1,9 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { resolve, basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { CreatePetOptions, Pet } from '../shared/types.ts';
 import { ALL_GIFS } from '../shared/types.ts';
+import { createStorage, type Storage } from './storage.ts';
+import { attachSseClient, dispatch, closeAll, type PetEvent } from './sse.ts';
+import { createPetAgent, type PetAgent } from './agent.ts';
 
 const HERE_FILE = fileURLToPath(import.meta.url);
 const PKG_ROOT = resolve(dirname(HERE_FILE), '../..');
@@ -11,37 +15,98 @@ const ASSETS_DIR = resolve(PKG_ROOT, 'src/assets');
 const CLIENT_JS_PATH = resolve(PKG_ROOT, 'dist/client.js');
 
 const GIF_SET = new Set(ALL_GIFS);
+const MAX_BODY_BYTES = 64 * 1024;
 
 interface RuntimeState {
   clientCache: Buffer | null;
+  storage: Storage | null;
+  agent: PetAgent | null;
+  silentMode: boolean;
 }
 
 export function buildPet(opts: CreatePetOptions): Pet {
   const prefix = (opts.routePrefix ?? '/api/pet').replace(/\/$/, '');
-  const state: RuntimeState = { clientCache: null };
+  const apiKey = opts.llm?.apiKey ?? '';
+  const silentMode = !apiKey;
+
+  const chatDir = opts.storage?.chatDir ?? resolve(homedir(), '.mdzen');
+  const storage = silentMode ? null : createStorage({ chatDir, workspaceRoot: opts.workspaceRoot });
+  const agent = silentMode
+    ? null
+    : createPetAgent({
+        workspaceRoot: opts.workspaceRoot,
+        apiKey,
+        baseURL: opts.llm?.baseURL,
+        model: opts.llm?.model,
+        personality: opts.personality,
+      });
+
+  const state: RuntimeState = { clientCache: null, storage, agent, silentMode };
 
   const matches = (req: IncomingMessage): boolean => {
     const url = req.url ?? '';
-    return url === `${prefix}/client.js` || url.startsWith(`${prefix}/assets/`);
+    const path = url.split('?')[0] ?? '';
+    return (
+      path === `${prefix}/client.js` ||
+      path === `${prefix}/sse` ||
+      path === `${prefix}/chat` ||
+      path === `${prefix}/history` ||
+      path.startsWith(`${prefix}/assets/`)
+    );
   };
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
-      const url = (req.url ?? '').split('?')[0] ?? '';
-      if (url === `${prefix}/client.js`) return await serveClient(state, res);
-      if (url.startsWith(`${prefix}/assets/`)) {
-        return await serveAsset(url.slice(`${prefix}/assets/`.length), res);
+      const fullUrl = req.url ?? '';
+      const path = fullUrl.split('?')[0] ?? '';
+      const query = new URLSearchParams(fullUrl.includes('?') ? fullUrl.slice(fullUrl.indexOf('?') + 1) : '');
+
+      if (path === `${prefix}/client.js`) return await serveClient(state, res);
+      if (path.startsWith(`${prefix}/assets/`)) {
+        return await serveAsset(path.slice(`${prefix}/assets/`.length), res);
+      }
+      if (path === `${prefix}/sse` && req.method === 'GET') {
+        const sessionId = query.get('session') ?? '';
+        if (!sessionId) {
+          res.statusCode = 400;
+          res.end();
+          return;
+        }
+        attachSseClient(sessionId, res);
+        return;
+      }
+      if (path === `${prefix}/history` && req.method === 'GET') {
+        const sessionId = query.get('session') ?? '';
+        if (!sessionId || !state.storage) {
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end('[]');
+          return;
+        }
+        const msgs = await state.storage.loadHistory(sessionId);
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify(msgs));
+        return;
+      }
+      if (path === `${prefix}/chat` && req.method === 'POST') {
+        return await handleChat(state, req, res);
       }
       res.statusCode = 404;
       res.end();
-    } catch {
-      res.statusCode = 500;
-      res.end();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[pet] handle error:', message);
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.end();
+      }
     }
   };
 
   const scriptTag = (): string => `<script src="${prefix}/client.js" defer></script>`;
   const close = async (): Promise<void> => {
+    closeAll();
     state.clientCache = null;
   };
 
@@ -90,4 +155,57 @@ async function serveClient(state: RuntimeState, res: ServerResponse): Promise<vo
   res.setHeader('content-type', 'application/javascript; charset=utf-8');
   res.setHeader('cache-control', 'public, max-age=300');
   res.end(state.clientCache);
+}
+
+async function handleChat(state: RuntimeState, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (state.silentMode || !state.agent || !state.storage) {
+    res.statusCode = 503;
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ message: '没接 LLM' }));
+    return;
+  }
+
+  const body = await readJson(req);
+  const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : '';
+  const text = typeof body?.text === 'string' ? body.text : '';
+  if (!sessionId || !text) {
+    res.statusCode = 400;
+    res.end();
+    return;
+  }
+
+  res.statusCode = 202;
+  res.setHeader('content-type', 'application/json');
+  res.end(JSON.stringify({ accepted: true }));
+
+  const now = Date.now();
+  const storage = state.storage;
+  const agent = state.agent;
+  storage.appendMessage(sessionId, { role: 'user', content: text, timestamp: now }).catch(() => {});
+  void (async () => {
+    try {
+      const history = await storage.loadHistory(sessionId);
+      const past = history.slice(0, Math.max(0, history.length - 1));
+      const reply = await agent.run(sessionId, past, text);
+      await storage.appendMessage(sessionId, { role: 'assistant', content: reply, timestamp: Date.now() });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const ev: PetEvent = { type: 'error', sessionId, message };
+      dispatch(ev);
+    }
+  })();
+}
+
+async function readJson(req: IncomingMessage): Promise<{ sessionId?: unknown; text?: unknown } | null> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req as AsyncIterable<Buffer>) {
+    total += chunk.length;
+    if (total > MAX_BODY_BYTES) throw new Error('payload too large');
+    chunks.push(chunk);
+  }
+  if (chunks.length === 0) return null;
+  const text = Buffer.concat(chunks).toString('utf-8');
+  if (!text) return null;
+  return JSON.parse(text);
 }
