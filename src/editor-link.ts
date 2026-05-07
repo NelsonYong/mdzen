@@ -20,6 +20,9 @@ export const editorLinkStyles = `
   align-items: center;
   justify-content: center;
   opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
   transition: opacity 0.15s ease, background 0.15s ease;
   font-size: 12px;
   line-height: 1;
@@ -29,9 +32,11 @@ export const editorLinkStyles = `
 .content [data-source-line]:hover > .line-link-btn,
 .content [data-source-line]:focus-within > .line-link-btn {
   opacity: 1;
+  pointer-events: auto;
 }
 .line-link-btn:focus-visible {
   opacity: 1;
+  pointer-events: auto;
   outline: 2px solid var(--link-color);
   outline-offset: 1px;
 }

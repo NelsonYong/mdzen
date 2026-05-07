@@ -27,13 +27,14 @@ const treeScript = `
 
     function setFolder(folderId, expanded) {
       var content = document.getElementById(folderId);
-      var arrow = document.getElementById('arrow-' + folderId);
-      var btn = document.querySelector('[data-folder="' + folderId + '"]');
-      if (!content || !arrow) return;
+      if (!content) return;
       content.hidden = !expanded;
-      arrow.textContent = expanded ? '▼' : '▶';
-      arrow.classList.toggle('expanded', expanded);
-      if (btn) btn.setAttribute('aria-expanded', String(expanded));
+      var btn = document.querySelector('[data-folder="' + folderId + '"]');
+      if (btn) {
+        btn.setAttribute('aria-expanded', String(expanded));
+        var folder = btn.closest('.tree-folder');
+        if (folder) folder.classList.toggle('is-expanded', expanded);
+      }
     }
 
     function toggleFolder(folderId) {

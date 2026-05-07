@@ -20,6 +20,9 @@ export const copyCodeStyles = `
   color: var(--btn-color);
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
   transition: opacity 0.2s ease, color 0.2s, background 0.2s;
   display: flex;
   align-items: center;
@@ -31,6 +34,7 @@ export const copyCodeStyles = `
 .content pre:focus-within .code-copy-btn,
 .code-copy-btn:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 .code-copy-btn:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
 .code-copy-btn:hover { background: var(--btn-hover-bg); border-color: var(--btn-hover-border); color: var(--btn-hover-color); }
@@ -544,13 +548,16 @@ pre.mermaid[data-mermaid-error="true"] {
   align-items: center;
   justify-content: center;
   opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
   transition: opacity 0.2s ease, color 0.2s, background 0.2s;
   padding: 0;
   z-index: 5;
 }
 pre.mermaid:hover .mermaid-expand-btn,
 pre.mermaid:focus-within .mermaid-expand-btn,
-.mermaid-expand-btn:focus-visible { opacity: 1; }
+.mermaid-expand-btn:focus-visible { opacity: 1; pointer-events: auto; }
 .mermaid-expand-btn:hover { background: var(--btn-hover-bg); border-color: var(--btn-hover-border); color: var(--btn-hover-color); }
 
 /* Fullscreen modal */

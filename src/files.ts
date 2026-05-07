@@ -91,35 +91,59 @@ export function countFiles(node: TreeNode): number {
   return count;
 }
 
+const ICON_FOLDER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9z"/></svg>`;
+const ICON_FILE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><polyline points="14 3 14 8 19 8"/></svg>`;
+const ICON_FILE_MDC = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><polyline points="14 3 14 8 19 8"/><line x1="8.5" y1="13.5" x2="15.5" y2="13.5"/><line x1="8.5" y1="17" x2="13.5" y2="17"/></svg>`;
+const ICON_CHEVRON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>`;
+
+function formatRelTime(mtimeMs: number): string {
+  const diff = Date.now() - mtimeMs;
+  if (diff < 0) return '';
+  const min = Math.round(diff / 60000);
+  if (min < 1) return '刚刚';
+  if (min < 60) return `${min} 分钟前`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr} 小时前`;
+  const day = Math.round(hr / 24);
+  if (day < 30) return `${day} 天前`;
+  const mon = Math.round(day / 30);
+  if (mon < 12) return `${mon} 个月前`;
+  const yr = Math.round(mon / 12);
+  return `${yr} 年前`;
+}
+
 export function renderTree(node: TreeNode, level = 0, parentPath = ''): string {
   const parts: string[] = [];
 
   for (const file of node.files) {
-    const icon = extname(file.name) === '.mdc' ? '🚥' : '📄';
-    const padding = level * 20 + 12;
+    const isMdc = extname(file.name) === '.mdc';
+    const icon = isMdc ? ICON_FILE_MDC : ICON_FILE;
+    let mtimeLabel = '';
+    try {
+      mtimeLabel = formatRelTime(statSync(join(DOC_ROOT, file.path)).mtimeMs);
+    } catch { /* file vanished between dir scan and stat — skip meta */ }
+    const cls = `tree-row tree-file${isMdc ? ' is-mdc' : ''}`;
     parts.push(html`
-      <div class="tree-file" style="padding-left: ${padding}px">
-        <a href="/view/${encodeURIComponent(file.path)}">
-          <span class="tree-icon" aria-hidden="true">${icon}</span>
-          <span class="tree-name">${file.name}</span>
-        </a>
-      </div>`);
+      <a class="${cls}" href="/view/${encodeURIComponent(file.path)}" style="--level:${level}">
+        <span class="tree-icon">${raw(icon)}</span>
+        <span class="tree-name">${file.name}</span>
+        <span class="tree-meta">${mtimeLabel}</span>
+      </a>`);
   }
 
   for (const childName of Object.keys(node.children).sort()) {
     const child = node.children[childName]!;
     const childPath = parentPath ? `${parentPath}/${childName}` : childName;
     const folderId = `folder-${childPath.replace(/[^a-zA-Z0-9]/g, '-')}`;
-    const padding = level * 20 + 12;
     parts.push(html`
       <div class="tree-folder">
-        <button type="button" class="tree-folder-header" style="padding-left: ${padding}px" data-folder="${folderId}" aria-expanded="false" aria-controls="${folderId}">
-          <span class="tree-arrow" id="arrow-${folderId}" aria-hidden="true">▶</span>
-          <span class="tree-icon" aria-hidden="true">📁</span>
+        <button type="button" class="tree-row tree-folder-header" data-folder="${folderId}" aria-expanded="false" aria-controls="${folderId}" style="--level:${level}">
+          <span class="tree-chevron">${raw(ICON_CHEVRON)}</span>
+          <span class="tree-icon">${raw(ICON_FOLDER)}</span>
           <span class="tree-name">${childName}</span>
           <span class="tree-count">${countFiles(child)}</span>
         </button>
-        <div class="tree-folder-content" id="${folderId}" hidden>${raw(renderTree(child, level + 1, childPath))}</div>
+        <div class="tree-folder-content" id="${folderId}" style="--guide-level:${level}" hidden>${raw(renderTree(child, level + 1, childPath))}</div>
       </div>`);
   }
 
