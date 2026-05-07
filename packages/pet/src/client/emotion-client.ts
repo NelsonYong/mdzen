@@ -52,6 +52,10 @@ export class EmotionClient {
   isHiding(): boolean {
     return this.zone() === 'hiding';
   }
+
+  contextualPhrase(): string | undefined {
+    return this.state.contextualPhrase;
+  }
 }
 
 export const globalEmotion = new EmotionClient();

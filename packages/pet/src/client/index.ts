@@ -3,7 +3,7 @@ import { Loop } from './loop.ts';
 import { attachDrag } from './drag.ts';
 import { BubbleHost } from './bubble.ts';
 import { CooldownGate } from './cooldown.ts';
-import { pickPreset } from './presets.ts';
+import { mixedLine } from './lines.ts';
 import { attachSelection } from './triggers/selection.ts';
 import { attachCopy } from './triggers/copy.ts';
 import { attachIdle } from './triggers/idle.ts';
@@ -102,7 +102,7 @@ function start(): void {
     onDragStart: () => {
       loop.freeze();
       sprite.setState('waiting');
-      bubble.show({ text: pickPreset('protest'), variant: 'protest' });
+      bubble.show({ text: mixedLine('protest'), variant: 'protest' });
       dragCount += 1;
       globalEmotion.emit(dragCount >= 3 ? 'drag-3plus' : 'drag-1st');
     },

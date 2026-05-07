@@ -1,6 +1,6 @@
 import type { BubbleHost } from '../bubble.ts';
 import type { CooldownGate } from '../cooldown.ts';
-import { pickPreset } from '../presets.ts';
+import { mixedLine } from '../lines.ts';
 
 const IDLE_THRESHOLD_MS = 5 * 60_000;
 const POLL_MS = 30_000;
@@ -22,7 +22,7 @@ export function attachIdle(bubble: BubbleHost, gate: CooldownGate): { destroy: (
     if (firedThisIdle) return;
     if (now - lastActivity < IDLE_THRESHOLD_MS) return;
     if (gate.tryFire('idle', TRIGGER_GUARD_MS, now, Math.random, 1.0)) {
-      bubble.show({ text: pickPreset('idle_long'), variant: 'thought', durationMs: 8000 });
+      bubble.show({ text: mixedLine('idle_long'), variant: 'thought', durationMs: 8000 });
       firedThisIdle = true;
     }
   }, POLL_MS);

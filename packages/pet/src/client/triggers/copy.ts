@@ -1,6 +1,6 @@
 import type { BubbleHost } from '../bubble.ts';
 import type { CooldownGate } from '../cooldown.ts';
-import { pickPreset } from '../presets.ts';
+import { mixedLine } from '../lines.ts';
 import { globalEmotion } from '../emotion-client.ts';
 
 const MIN_COPY_LEN = 10;
@@ -14,7 +14,7 @@ export function attachCopy(bubble: BubbleHost, gate: CooldownGate): { destroy: (
     if (globalEmotion.shouldGateProbabilisticTrigger()) return;
     const now = performance.now();
     if (gate.tryFire('copy', COOLDOWN_MS, now, Math.random, PROBABILITY)) {
-      bubble.show({ text: pickPreset('copy'), variant: 'passive' });
+      bubble.show({ text: mixedLine('copy'), variant: 'passive' });
     }
   };
   document.addEventListener('copy', onCopy);

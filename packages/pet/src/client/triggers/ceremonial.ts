@@ -1,7 +1,7 @@
 import type { BubbleHost } from '../bubble.ts';
 import type { CooldownGate } from '../cooldown.ts';
 import type { Sprite } from '../sprite.ts';
-import { pickPreset } from '../presets.ts';
+import { mixedLine } from '../lines.ts';
 
 const SCROLL_END_PROBABILITY = 0.60;
 const SCROLL_END_COOLDOWN = 120_000;
@@ -28,7 +28,7 @@ export function attachCeremonial(
     const now = performance.now();
     if (gate.tryFire('scroll-end', SCROLL_END_COOLDOWN, now, Math.random, SCROLL_END_PROBABILITY)) {
       sprite.setState('waving');
-      bubble.show({ text: pickPreset('ceremony_read_end'), variant: 'passive' });
+      bubble.show({ text: mixedLine('ceremony_read_end'), variant: 'passive' });
     }
   };
 
@@ -38,7 +38,7 @@ export function attachCeremonial(
     const now = performance.now();
     if (gate.tryFire('file-switch', FILE_SWITCH_COOLDOWN, now, Math.random, FILE_SWITCH_PROBABILITY)) {
       sprite.setState('waving');
-      bubble.show({ text: pickPreset('ceremony_file_switch'), variant: 'passive' });
+      bubble.show({ text: mixedLine('ceremony_file_switch'), variant: 'passive' });
     }
   };
 
