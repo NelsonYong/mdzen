@@ -5,8 +5,11 @@ export interface CooldownConfig {
 export class CooldownGate {
   private lastByCategory = new Map<string, number>();
   private lastGlobal = -Infinity;
+  private cfg: CooldownConfig;
 
-  constructor(private cfg: CooldownConfig) {}
+  constructor(cfg: CooldownConfig) {
+    this.cfg = cfg;
+  }
 
   tryFire(
     category: string,

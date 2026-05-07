@@ -26,8 +26,10 @@ export class Loop {
   private rafHandle = 0;
   private rng: () => number;
   private frozen = false;
+  private opts: LoopOptions;
 
-  constructor(private opts: LoopOptions) {
+  constructor(opts: LoopOptions) {
+    this.opts = opts;
     this.rng = opts.rng ?? Math.random;
     const b = this.bound();
     this.pos = { x: b.x + b.w * 0.9, y: b.y + b.h * 0.9 };
