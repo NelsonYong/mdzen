@@ -2,7 +2,12 @@ import { Sprite } from './sprite.ts';
 import { Loop } from './loop.ts';
 import { attachDrag } from './drag.ts';
 import { BubbleHost } from './bubble.ts';
+import { CooldownGate } from './cooldown.ts';
 import { pickPreset } from './presets.ts';
+import { attachSelection } from './triggers/selection.ts';
+import { attachCopy } from './triggers/copy.ts';
+import { attachIdle } from './triggers/idle.ts';
+import { attachCeremonial } from './triggers/ceremonial.ts';
 import { clampPoint, computeBound, type Rect } from './boundary.ts';
 
 declare global {
@@ -52,6 +57,12 @@ function start(): void {
   });
   loop.start();
 
+  const gate = new CooldownGate({ globalMs: 30_000 });
+  const selection = attachSelection(bubble, gate);
+  const copy = attachCopy(bubble, gate);
+  const idle = attachIdle(bubble, gate);
+  const ceremonial = attachCeremonial(bubble, gate, sprite);
+
   const drag = attachDrag({
     trigger: sprite.img,
     onDragStart: () => {
@@ -77,6 +88,10 @@ function start(): void {
 
   window.__mdzenPet = {
     stop: () => {
+      selection.destroy();
+      copy.destroy();
+      idle.destroy();
+      ceremonial.destroy();
       drag.destroy();
       bubble.destroy();
       loop.stop();
