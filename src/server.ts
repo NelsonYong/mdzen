@@ -28,6 +28,7 @@ import {
   type AnnotationColor,
 } from './annotations.ts';
 import { getCanvas, putCanvas, deleteCanvas } from './canvas.ts';
+import { pet } from './pet-adapter.ts';
 
 function originIsLocal(req: IncomingMessage): boolean {
   const origin = req.headers.origin;
@@ -249,6 +250,11 @@ async function handleCanvas(
 }
 
 function handleRequest(req: IncomingMessage, res: ServerResponse): void {
+  if (pet.matches(req)) {
+    void pet.handle(req, res).catch((err) => send500(res, err));
+    return;
+  }
+
   const fullUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
   const rawPath = fullUrl.pathname;
   const url = decodeUrlPath(rawPath);
@@ -394,6 +400,7 @@ async function shutdown(signal: string): Promise<void> {
   }, 3_000);
 
   closeAllClients();
+  await pet.close().catch(() => undefined);
 
   try {
     await new Promise<void>((resolve, reject) => {
