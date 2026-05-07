@@ -10,6 +10,7 @@ import { dispatch } from './sse.ts';
 import type { ProposalRegistry } from './proposals.ts';
 import type { EmotionStore } from './emotion-storage.ts';
 import { affectionZone, PRESET_PHRASES, tickRecovery } from './emotion.ts';
+import { generateContextualPhrase, shouldRegenerate } from './contextual.ts';
 
 const DEFAULT_PERSONALITY: PersonalityConfig = {
   name: '希莲',
@@ -135,6 +136,36 @@ export function createPetAgent(deps: AgentDeps): PetAgent {
         throw err;
       }
       dispatch({ type: 'final', sessionId, messageId: `${Date.now()}` });
+
+      if (deps.emotionStore) {
+        void (async () => {
+          try {
+            const cur = await deps.emotionStore!.load();
+            const ticked = tickRecovery(cur, Date.now());
+            if (shouldRegenerate(ticked, cur.affection, Date.now())) {
+              const phrase = await generateContextualPhrase(
+                {
+                  apiKey: deps.apiKey,
+                  baseURL: deps.baseURL,
+                  model: deps.model,
+                  personality,
+                },
+                ticked,
+                history.slice(-5),
+                '',
+              );
+              if (phrase) {
+                await deps.emotionStore!.save({
+                  ...ticked,
+                  contextualPhrase: phrase,
+                  contextualPhraseAt: Date.now(),
+                });
+              }
+            }
+          } catch {}
+        })();
+      }
+
       return acc;
     },
   };
