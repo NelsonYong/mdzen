@@ -1,0 +1,30 @@
+{
+  "name": "@mdzen/pet",
+  "version": "0.0.1",
+  "description": "Reading companion pet for markdown viewers",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
+    "build:client": "node --experimental-strip-types scripts/build-client.ts"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}
