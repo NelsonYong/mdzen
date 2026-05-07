@@ -3,21 +3,24 @@
   "version": "0.0.1",
   "description": "Reading companion pet for markdown viewers",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
   "files": [
-    "src",
-    "dist"
+    "dist",
+    "src/assets"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
-    "build:client": "node --experimental-strip-types scripts/build-client.ts"
+    "build:server": "tsc -p tsconfig.build.json",
+    "build:client": "node --experimental-strip-types scripts/build-client.ts",
+    "build": "pnpm run build:server && pnpm run build:client"
   },
   "engines": {
     "node": ">=22.6.0"
