@@ -6,12 +6,16 @@ import { resolve, relative, extname } from 'node:path';
 const MAX_FILE_BYTES = 50 * 1024;
 const MAX_SEARCH_HITS = 20;
 
+export interface ToolContext {
+  proposeEdit(input: { path: string; oldText: string; newText: string; reason: string }): Promise<string>;
+}
+
 function isInside(root: string, path: string): boolean {
   const r = relative(root, path);
   return r !== '' && !r.startsWith('..') && !r.startsWith('/');
 }
 
-export function buildTools(workspaceRoot: string) {
+export function buildTools(workspaceRoot: string, ctx?: ToolContext) {
   const listFiles = tool(
     async () => {
       const out: string[] = [];
@@ -93,5 +97,27 @@ export function buildTools(workspaceRoot: string) {
     },
   );
 
-  return [listFiles, readFileTool, searchTool];
+  const tools: unknown[] = [listFiles, readFileTool, searchTool];
+
+  if (ctx) {
+    const proposeEdit = tool(
+      async (input: { path: string; oldText: string; newText: string; reason: string }) => {
+        return ctx.proposeEdit(input);
+      },
+      {
+        name: 'propose_edit',
+        description:
+          '提议修改一个 md 文件中的一段文字。oldText 必须是原文逐字, newText 是替换段, reason 一句话解释。提议会显示给用户审阅, 不会立即写盘。',
+        schema: z.object({
+          path: z.string(),
+          oldText: z.string(),
+          newText: z.string(),
+          reason: z.string(),
+        }),
+      },
+    );
+    tools.push(proposeEdit);
+  }
+
+  return tools as NonNullable<Parameters<typeof import('langchain').createAgent>[0]['tools']>;
 }

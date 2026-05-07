@@ -1,10 +1,13 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { createAgent } from 'langchain';
 import { HumanMessage, AIMessage, SystemMessage, type BaseMessage } from '@langchain/core/messages';
+import { resolve, relative, extname } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import type { PersonalityConfig } from '../shared/types.ts';
 import type { ChatMessage } from './storage.ts';
-import { buildTools } from './tools.ts';
+import { buildTools, type ToolContext } from './tools.ts';
 import { dispatch } from './sse.ts';
+import type { ProposalRegistry } from './proposals.ts';
 
 const DEFAULT_PERSONALITY: PersonalityConfig = {
   name: '希莲',
@@ -20,10 +23,16 @@ export interface AgentDeps {
   baseURL?: string;
   model?: string;
   personality?: Partial<PersonalityConfig>;
+  proposals?: ProposalRegistry;
 }
 
 export interface PetAgent {
   run(sessionId: string, history: ChatMessage[], userText: string): Promise<string>;
+}
+
+function isInside(root: string, path: string): boolean {
+  const r = relative(root, path);
+  return r !== '' && !r.startsWith('..') && !r.startsWith('/');
 }
 
 export function createPetAgent(deps: AgentDeps): PetAgent {
@@ -34,12 +43,47 @@ export function createPetAgent(deps: AgentDeps): PetAgent {
     streaming: true,
     configuration: deps.baseURL ? { baseURL: deps.baseURL } : undefined,
   });
-  const tools = buildTools(deps.workspaceRoot);
-  const agent = createAgent({ model: llm, tools });
-  const systemPrompt = buildSystemPrompt(personality);
+  const systemPrompt = buildSystemPrompt(personality, !!deps.proposals);
 
   return {
     async run(sessionId, history, userText) {
+      const ctx: ToolContext | undefined = deps.proposals
+        ? {
+            async proposeEdit(input) {
+              const target = resolve(deps.workspaceRoot, input.path);
+              if (!isInside(deps.workspaceRoot, target)) throw new Error('path outside workspace');
+              if (extname(target) !== '.md') throw new Error('only .md files');
+              const content = await readFile(target, 'utf-8');
+              if (!content.includes(input.oldText)) {
+                throw new Error('oldText not found verbatim in current file');
+              }
+              const id = deps.proposals!.create(
+                {
+                  sessionId,
+                  path: input.path,
+                  oldText: input.oldText,
+                  newText: input.newText,
+                  reason: input.reason,
+                },
+                Date.now(),
+              );
+              dispatch({
+                type: 'propose-edit',
+                sessionId,
+                proposalId: id,
+                path: input.path,
+                oldText: input.oldText,
+                newText: input.newText,
+                reason: input.reason,
+              });
+              return `提议已发送给用户, 等候应用或拒绝(proposalId=${id})`;
+            },
+          }
+        : undefined;
+
+      const tools = buildTools(deps.workspaceRoot, ctx);
+      const agent = createAgent({ model: llm, tools });
+
       const messages: BaseMessage[] = [
         new SystemMessage(systemPrompt),
         ...history.map((m) =>
@@ -80,7 +124,10 @@ export function createPetAgent(deps: AgentDeps): PetAgent {
   };
 }
 
-function buildSystemPrompt(p: PersonalityConfig): string {
+function buildSystemPrompt(p: PersonalityConfig, canEdit: boolean): string {
+  const editGuide = canEdit
+    ? '- 提议改文档时, 必须用 propose_edit, 永远不直接给"修改后的全文"让用户自己粘贴。propose_edit.oldText 必须是原文逐字, newText 给完整替换段, reason 一句话说明。'
+    : '- 暂时不能修改文件(那是后续版本的能力)。';
   return [
     `你是${p.name}, 一个住在 markdown 阅读器里的 AI 阅读伙伴。`,
     `性格: 温柔, 少女, 第一人称用"${p.pronoun}"。简短为美 — 默认 1-2 句, 用户问"详细说说"才展开。`,
@@ -88,7 +135,7 @@ function buildSystemPrompt(p: PersonalityConfig): string {
     '',
     '工具守则:',
     '- 用户问的内容不在当前文件 → 先 search 再 read_file。',
-    '- 暂时不能修改文件(那是后续版本的能力)。',
+    editGuide,
     '- 不主动跳话题 — 解释完就停。',
   ]
     .filter(Boolean)

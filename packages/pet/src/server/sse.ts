@@ -4,6 +4,14 @@ export type PetEvent =
   | { type: 'token'; sessionId: string; text: string }
   | { type: 'tool-start'; sessionId: string; tool: string }
   | { type: 'tool-end'; sessionId: string; tool: string }
+  | { type: 'propose-edit';
+      sessionId: string;
+      proposalId: string;
+      path: string;
+      oldText: string;
+      newText: string;
+      reason: string }
+  | { type: 'edit-applied'; sessionId: string; proposalId: string; path: string }
   | { type: 'final'; sessionId: string; messageId: string }
   | { type: 'error'; sessionId: string; message: string };
 
