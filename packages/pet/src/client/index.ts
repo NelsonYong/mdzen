@@ -8,6 +8,8 @@ import { attachSelection } from './triggers/selection.ts';
 import { attachCopy } from './triggers/copy.ts';
 import { attachIdle } from './triggers/idle.ts';
 import { attachCeremonial } from './triggers/ceremonial.ts';
+import { attachMischief } from './mischief.ts';
+import { peekOnLoad, attachDodgeClick } from './peek-dodge.ts';
 import { clampPoint, computeBound, type Rect } from './boundary.ts';
 
 declare global {
@@ -57,6 +59,25 @@ function start(): void {
   });
   loop.start();
 
+  const initialBound = computeBound({
+    viewport: { w: window.innerWidth, h: window.innerHeight },
+    excluded: getExcluded(),
+    padding,
+  });
+  peekOnLoad(sprite, loop, {
+    x: initialBound.x + initialBound.w * 0.9,
+    y: initialBound.y + initialBound.h * 0.9,
+  });
+
+  const mischief = attachMischief({
+    loop,
+    sprite,
+    getViewport: () => ({ w: window.innerWidth, h: window.innerHeight }),
+    getExcluded,
+    padding,
+  });
+  const dodge = attachDodgeClick(sprite, loop);
+
   const gate = new CooldownGate({ globalMs: 30_000 });
   const selection = attachSelection(bubble, gate);
   const copy = attachCopy(bubble, gate);
@@ -92,6 +113,8 @@ function start(): void {
       copy.destroy();
       idle.destroy();
       ceremonial.destroy();
+      mischief.destroy();
+      dodge.destroy();
       drag.destroy();
       bubble.destroy();
       loop.stop();
