@@ -6,13 +6,23 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { CreatePetOptions, Pet } from '../shared/types.ts';
 import { ALL_GIFS } from '../shared/types.ts';
 import { createStorage, type Storage } from './storage.ts';
-import { attachSseClient, dispatch, closeAll, type PetEvent } from './sse.ts';
+import { createSseChannels, type SseChannels, type PetEvent } from './sse.ts';
 import { createPetAgent, type PetAgent } from './agent.ts';
 import { ProposalRegistry } from './proposals.ts';
 import { createEmotionStore, type EmotionStore } from './emotion-storage.ts';
 import { applyEvent, tickRecovery, type EmotionEvent } from './emotion.ts';
 import { createMemoryStore, type MemoryStore } from './memory.ts';
-import { recordSignal, startProactiveLoop, stopProactiveLoop } from './proactive.ts';
+import { createProactiveLoop, type ProactiveLoop } from './proactive.ts';
+import { loadProfile, type PetProfile } from './profile.ts';
+import { getPreset } from './profile-presets.ts';
+import { createAnimationRegistry, type AnimationRegistry } from '../shared/animations.ts';
+import { createInnerThoughtStore, type InnerThoughtStore } from './inner-thought.ts';
+import { createAcquiredStore, type AcquiredStore } from './acquired.ts';
+import { createPresenceStore, type PresenceStore } from './presence.ts';
+import { createDreamLogStore, type DreamLogStore } from './dream-log.ts';
+import { runDream } from './dream.ts';
+import { createDayMoodStore, type DayMoodStore } from './day-mood.ts';
+import { migrateLegacyWorkspaceData } from './migrate.ts';
 
 const HERE_FILE = fileURLToPath(import.meta.url);
 const PKG_ROOT = resolve(dirname(HERE_FILE), '../..');
@@ -31,7 +41,24 @@ interface RuntimeState {
   workspaceRoot: string;
   emotion: EmotionStore;
   memory: MemoryStore;
-  stopProactive: () => void;
+  acquired: AcquiredStore;
+  animations: AnimationRegistry;
+  presence: PresenceStore;
+  dreamLog: DreamLogStore;
+  sse: SseChannels;
+  proactive: ProactiveLoop | null;
+  apiKey: string;
+  baseURL?: string;
+  model?: string;
+  resolveProfile: () => Promise<PetProfile>;
+  prefix: string;
+  clientConfig: {
+    showSprite: boolean;
+    autonomousMotion: boolean;
+    llmActions: boolean;
+    routePrefix: string;
+    animations: Array<{ id: string; assetUrl: string; tags: string[]; defaultDurationMs: number; category: string }>;
+  };
 }
 
 export function buildPet(opts: CreatePetOptions): Pet {
@@ -39,52 +66,134 @@ export function buildPet(opts: CreatePetOptions): Pet {
   const apiKey = opts.llm?.apiKey ?? '';
   const silentMode = !apiKey;
 
-  const chatDir = opts.storage?.chatDir ?? resolve(homedir(), '.mdzen');
+  const chatDir = opts.storage?.chatDir ?? resolve(homedir(), '.seren');
+  // Relationship-scoped state lives in ONE place across all workspaces.
+  // She and you have a single relationship; workspaces are scenes inside it.
+  // Chat history stays per-workspace because conversations are topic-scoped.
+  const globalDir = resolve(chatDir, 'global');
+  // Best-effort: bring existing per-workspace files into the new global layout.
+  void migrateLegacyWorkspaceData(chatDir, globalDir).catch(() => {});
+
   const storage = silentMode ? null : createStorage({ chatDir, workspaceRoot: opts.workspaceRoot });
   const proposals = new ProposalRegistry({ ttlMs: 10 * 60_000 });
-  const emotion = createEmotionStore({ chatDir, workspaceRoot: opts.workspaceRoot });
-  const memory = createMemoryStore({ chatDir, workspaceRoot: opts.workspaceRoot });
-  const agent = silentMode
-    ? null
-    : createPetAgent({
-        workspaceRoot: opts.workspaceRoot,
-        apiKey,
-        baseURL: opts.llm?.baseURL,
-        model: opts.llm?.model,
-        personality: opts.personality,
-        proposals,
-        emotionStore: emotion,
-        memoryStore: memory,
-      });
+  const emotion = createEmotionStore({ dir: globalDir });
+  const memory = createMemoryStore({ dir: globalDir });
+  const innerThought: InnerThoughtStore = createInnerThoughtStore({ dir: globalDir });
+  const acquired: AcquiredStore = createAcquiredStore({ dir: globalDir });
+  const presence: PresenceStore = createPresenceStore({ dir: globalDir });
+  const dreamLog: DreamLogStore = createDreamLogStore({ dir: globalDir });
+  const dayMood: DayMoodStore = createDayMoodStore({ dir: globalDir });
+  // Animation registry: core + user-provided extensions.
+  const animations = createAnimationRegistry(
+    (opts.extraAnimations ?? []).map((a) => ({
+      id: a.id,
+      assetUrl: a.assetUrl,
+      tags: a.tags ?? [],
+      defaultDurationMs: a.defaultDurationMs ?? 1500,
+    })),
+  );
 
-  const stopProactive = silentMode
-    ? () => undefined
-    : startProactiveLoop({
+  // Profile is loaded lazily on first chat — buildPet stays sync.
+  let cachedProfile: PetProfile | null = null;
+  const ensureProfile = async (): Promise<PetProfile> => {
+    if (cachedProfile) return cachedProfile;
+    const defaults = getPreset(opts.preset);
+    cachedProfile = await loadProfile({
+      soul: opts.soul,
+      profilePath: opts.profilePath,
+      soulPath: opts.soulPath,
+      workspaceRoot: opts.workspaceRoot,
+      defaults,
+    });
+    return cachedProfile;
+  };
+  // Per-Pet SSE channels — replaces module-level singleton.
+  const sse: SseChannels = createSseChannels();
+
+  let cachedAgent: PetAgent | null = null;
+  const ensureAgent = async (): Promise<PetAgent | null> => {
+    if (silentMode) return null;
+    if (cachedAgent) return cachedAgent;
+    const profile = await ensureProfile();
+    cachedAgent = createPetAgent({
+      workspaceRoot: opts.workspaceRoot,
+      apiKey,
+      baseURL: opts.llm?.baseURL,
+      model: opts.llm?.model,
+      profile,
+      animations,
+      llmActions: opts.client?.llmActions !== false,
+      proposals,
+      emotionStore: emotion,
+      memoryStore: memory,
+      innerThoughtStore: innerThought,
+      acquiredStore: acquired,
+      presenceStore: presence,
+      dreamLogStore: dreamLog,
+      dayMoodStore: dayMood,
+      dispatch: sse.dispatch,
+    });
+    return cachedAgent;
+  };
+
+  // Proactive loop seeded with the preset profile. profilePath / soulPath
+  // overrides are applied after first chat (via ensureProfile cache); the
+  // proactive loop's profile is preset-shaped which is fine — it only uses
+  // name/pronoun/tone for the system prompt.
+  const presetForStartup = getPreset(opts.preset);
+  const proactive: ProactiveLoop | null = silentMode
+    ? null
+    : createProactiveLoop({
         apiKey,
         baseURL: opts.llm?.baseURL,
         model: opts.llm?.model,
-        personality: {
-          name: opts.personality?.name ?? '希莲',
-          pronoun: opts.personality?.pronoun ?? '我',
-          baseTone: opts.personality?.baseTone ?? 'gentle-girlish',
-          emojiPolicy: opts.personality?.emojiPolicy ?? 'sparing',
-          responseLength: opts.personality?.responseLength ?? 'short',
-        },
+        profile: presetForStartup,
+        dispatch: sse.dispatch,
         emotionStore: emotion,
         memoryStore: memory,
         storage: storage ?? undefined,
+        // Dream stores: the proactive tick checks shouldDream first; if it
+        // fires, dreaming wins this tick (no proactive speech).
+        dreamLogStore: dreamLog,
+        acquiredStore: acquired,
+        presenceStore: presence,
       });
+  proactive?.start();
 
   const state: RuntimeState = {
     clientCache: null,
     storage,
-    agent,
+    agent: null, // lazily resolved via ensureAgent on first chat
     silentMode,
     proposals,
     workspaceRoot: opts.workspaceRoot,
     emotion,
     memory,
-    stopProactive,
+    acquired,
+    animations,
+    presence,
+    dreamLog,
+    sse,
+    proactive,
+    apiKey,
+    baseURL: opts.llm?.baseURL,
+    model: opts.llm?.model,
+    resolveProfile: ensureProfile,
+    prefix,
+    clientConfig: {
+      showSprite: opts.client?.showSprite ?? true,
+      autonomousMotion: opts.client?.autonomousMotion ?? true,
+      llmActions: opts.client?.llmActions !== false,
+      routePrefix: prefix,
+      // Snapshot the registry contents for the client to mirror.
+      animations: animations.list().map((a) => ({
+        id: a.id,
+        assetUrl: a.assetUrl,
+        tags: [...a.tags],
+        defaultDurationMs: a.defaultDurationMs,
+        category: a.category,
+      })),
+    },
   };
 
   const matches = (req: IncomingMessage): boolean => {
@@ -100,6 +209,9 @@ export function buildPet(opts: CreatePetOptions): Pet {
       path === `${prefix}/event` ||
       path === `${prefix}/signal` ||
       path === `${prefix}/memory` ||
+      path === `${prefix}/dream` ||
+      path === `${prefix}/acquired` ||
+      path === `${prefix}/dreams` ||
       path.startsWith(`${prefix}/assets/`)
     );
   };
@@ -121,7 +233,7 @@ export function buildPet(opts: CreatePetOptions): Pet {
           res.end();
           return;
         }
-        attachSseClient(sessionId, res);
+        state.sse.attach(sessionId, res);
         return;
       }
       if (path === `${prefix}/history` && req.method === 'GET') {
@@ -139,6 +251,8 @@ export function buildPet(opts: CreatePetOptions): Pet {
         return;
       }
       if (path === `${prefix}/chat` && req.method === 'POST') {
+        // Resolve agent on first hit; soul is read from disk here.
+        state.agent = await ensureAgent();
         return await handleChat(state, req, res);
       }
       if (path === `${prefix}/apply-edit` && req.method === 'POST') {
@@ -151,13 +265,22 @@ export function buildPet(opts: CreatePetOptions): Pet {
         return await handleEvent(state, req, res);
       }
       if (path === `${prefix}/signal` && req.method === 'POST') {
-        return await handleSignal(req, res);
+        return await handleSignal(state, req, res);
       }
       if (path === `${prefix}/history` && req.method === 'DELETE') {
         return await handleClearHistory(state, query, res);
       }
       if (path === `${prefix}/memory` && req.method === 'DELETE') {
         return await handleClearMemory(state, res);
+      }
+      if (path === `${prefix}/dream` && req.method === 'POST') {
+        return await handleDream(state, res);
+      }
+      if (path === `${prefix}/acquired` && req.method === 'GET') {
+        return await handleGetAcquired(state, res);
+      }
+      if (path === `${prefix}/dreams` && req.method === 'GET') {
+        return await handleGetDreams(state, res);
       }
       res.statusCode = 404;
       res.end();
@@ -171,10 +294,17 @@ export function buildPet(opts: CreatePetOptions): Pet {
     }
   };
 
-  const scriptTag = (): string => `<script src="${prefix}/client.js" defer></script>`;
+  const scriptTag = (): string => {
+    // Inject runtime config the client picks up before the bundle runs.
+    // Keys consumed by client/index.ts → window.__SEREN_CONFIG__.
+    const cfg = JSON.stringify(state.clientConfig)
+      .replace(/</g, '\\u003c')
+      .replace(/-->/g, '--\\u003e');
+    return `<script>window.__SEREN_CONFIG__=Object.assign(window.__SEREN_CONFIG__||{},${cfg});</script><script src="${prefix}/client.js" defer></script>`;
+  };
   const close = async (): Promise<void> => {
-    closeAll();
-    state.stopProactive();
+    state.sse.closeAll();
+    state.proactive?.stop();
     state.clientCache = null;
   };
 
@@ -215,7 +345,7 @@ async function serveClient(state: RuntimeState, res: ServerResponse): Promise<vo
     } catch {
       res.statusCode = 503;
       res.setHeader('content-type', 'text/plain; charset=utf-8');
-      res.end('client bundle missing — run `pnpm --filter @mdzen/pet build:client`');
+      res.end('client bundle missing — run `pnpm --filter @seren/pet build:client`');
       return;
     }
   }
@@ -262,7 +392,7 @@ async function handleChat(state: RuntimeState, req: IncomingMessage, res: Server
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const ev: PetEvent = { type: 'error', sessionId, message };
-      dispatch(ev);
+      state.sse.dispatch(ev);
     }
   })();
 }
@@ -290,6 +420,8 @@ async function handleEvent(state: RuntimeState, req: IncomingMessage, res: Serve
   const ticked = tickRecovery(await state.emotion.load(), now);
   const next = applyEvent(ticked, ev as EmotionEvent, now);
   await state.emotion.save(next);
+  // User-side action — counts as presence even without chat.
+  void state.presence.touch(now).catch(() => {});
   res.statusCode = 200;
   res.setHeader('content-type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(next));
@@ -315,7 +447,70 @@ async function handleClearMemory(state: RuntimeState, res: ServerResponse): Prom
   res.end(JSON.stringify({ ok: true }));
 }
 
-async function handleSignal(req: IncomingMessage, res: ServerResponse): Promise<void> {
+/** Read-only: surface acquired traits (her growth) for history-modal viewer. */
+async function handleGetAcquired(state: RuntimeState, res: ServerResponse): Promise<void> {
+  const acq = await state.acquired.load();
+  res.statusCode = 200;
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify(acq));
+}
+
+/** Read-only: surface recent dreams for history-modal viewer. */
+async function handleGetDreams(state: RuntimeState, res: ServerResponse): Promise<void> {
+  const log = await state.dreamLog.load();
+  res.statusCode = 200;
+  res.setHeader('content-type', 'application/json; charset=utf-8');
+  res.end(JSON.stringify(log));
+}
+
+/**
+ * Manual dream trigger — bypasses time/idle/episode gates. Useful for dev,
+ * and for offering "let her sleep on it" as an explicit user action later.
+ * Lock still respected.
+ */
+async function handleDream(state: RuntimeState, res: ServerResponse): Promise<void> {
+  if (state.silentMode) {
+    res.statusCode = 503;
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ message: '没接 LLM' }));
+    return;
+  }
+  try {
+    const profile = await state.resolveProfile();
+    const result = await runDream(
+      {
+        apiKey: state.apiKey,
+        baseURL: state.baseURL,
+        model: state.model,
+        profile,
+        memoryStore: state.memory,
+        acquiredStore: state.acquired,
+        dreamLogStore: state.dreamLog,
+      },
+      Date.now(),
+    );
+    res.statusCode = 200;
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    if (!result) {
+      res.end(JSON.stringify({ ok: false, reason: 'locked, no new episodes, or LLM error' }));
+      return;
+    }
+    res.end(
+      JSON.stringify({
+        ok: true,
+        questions: result.entry.questions,
+        insights: result.entry.insights,
+        appliedOpsCount: result.appliedOps.length,
+      }),
+    );
+  } catch (err) {
+    res.statusCode = 500;
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'unknown' }));
+  }
+}
+
+async function handleSignal(state: RuntimeState, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = (await readJson(req)) as
     | { sessionId?: unknown; currentDoc?: unknown; selection?: unknown; lastActivityAgoSec?: unknown }
     | null;
@@ -325,12 +520,19 @@ async function handleSignal(req: IncomingMessage, res: ServerResponse): Promise<
     res.end();
     return;
   }
-  recordSignal({
+  state.proactive?.recordSignal({
     sessionId,
     currentDoc: typeof body?.currentDoc === 'string' ? body.currentDoc : undefined,
     selection: typeof body?.selection === 'string' ? body.selection : undefined,
     lastActivityAgoSec: typeof body?.lastActivityAgoSec === 'number' ? body.lastActivityAgoSec : undefined,
   });
+  // Signal pings (every 30s when user is active) keep presence fresh.
+  // Skip touch when client reports user is idle longer than the ping interval —
+  // they're not really here, just leaving the tab open.
+  const idleSec = typeof body?.lastActivityAgoSec === 'number' ? body.lastActivityAgoSec : 0;
+  if (idleSec < 60) {
+    void state.presence.touch(Date.now()).catch(() => {});
+  }
   res.statusCode = 204;
   res.end();
 }
@@ -380,7 +582,7 @@ async function handleApplyEdit(state: RuntimeState, req: IncomingMessage, res: S
   await rename(tmp, target);
 
   const ev: PetEvent = { type: 'edit-applied', sessionId: p.sessionId, proposalId: id, path: p.path };
-  dispatch(ev);
+  state.sse.dispatch(ev);
 
   res.statusCode = 200;
   res.setHeader('content-type', 'application/json; charset=utf-8');

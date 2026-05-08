@@ -8,7 +8,7 @@ importers:
 
   .:
     dependencies:
-      '@mdzen/pet':
+      '@seren/pet':
         specifier: workspace:*
         version: link:packages/pet
       highlight.js:

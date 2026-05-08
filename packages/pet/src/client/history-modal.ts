@@ -1,4 +1,6 @@
 import { renderMarkdownTiny } from './markdown-tiny.ts';
+import { getRoutePrefix } from './route-config.ts';
+import { stripThinkBlocks } from '../shared/strip-think.ts';
 
 interface HistoryMessage {
   role: string;
@@ -6,7 +8,33 @@ interface HistoryMessage {
   timestamp: number;
 }
 
-const PREFIX = '/api/pet';
+interface AcquiredTraitDTO {
+  category: 'habit' | 'preference' | 'relation_belief';
+  text: string;
+  confidence: number;
+  firstObservedAt: number;
+  lastReinforcedAt: number;
+  reinforcementCount: number;
+}
+
+interface AcquiredStateDTO {
+  traits: AcquiredTraitDTO[];
+  updatedAt: number;
+}
+
+interface DreamLogEntryDTO {
+  ts: number;
+  newEpisodeCount: number;
+  questions: string[];
+  insights: { text: string; cited: number[] }[];
+  appliedOps: unknown[];
+}
+
+interface DreamLogDTO {
+  lastDreamAt: number;
+  dreamedThruEpisodeCount: number;
+  recentDreams: DreamLogEntryDTO[];
+}
 const STYLE_ID = 'mdzen-pet-history-styles';
 
 function ensureStylesheet(): void {
@@ -202,27 +230,132 @@ function ensureStylesheet(): void {
   background: #d05656; color: #fff;
 }
 .mdzen-pet-confirm-btn.danger:hover { background: #b84747; }
+
+/* Tabs */
+.mdzen-pet-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 22px;
+  border-bottom: 1px solid #eee;
+  background: #fafafa;
+}
+.mdzen-pet-tab {
+  padding: 10px 14px;
+  font-size: 12.5px;
+  color: #666;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 120ms ease, border-color 120ms ease;
+  font-family: inherit;
+}
+.mdzen-pet-tab:hover { color: #333; }
+.mdzen-pet-tab.active {
+  color: #c44b87;
+  border-bottom-color: #c44b87;
+}
+
+/* Acquired list */
+.mdzen-pet-acq-section { margin-bottom: 18px; }
+.mdzen-pet-acq-title {
+  font-size: 12px; color: #888; font-weight: 600;
+  margin-bottom: 6px; padding-bottom: 4px;
+  border-bottom: 1px dashed #e0e0e0;
+}
+.mdzen-pet-acq-item {
+  font-size: 13px; line-height: 1.5; padding: 4px 0;
+  display: flex; gap: 6px; align-items: baseline;
+}
+.mdzen-pet-acq-conf {
+  font-size: 10px; color: #aaa;
+  flex-shrink: 0;
+}
+
+/* Reconciled (dropped) traits — appears under the acquired tab as a small
+ * "她最近放下了" section, sourced from dream-log appliedOps. */
+.mdzen-pet-reconcile-section {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid #f0e8ec;
+}
+.mdzen-pet-reconcile-title {
+  font-size: 12px; color: #a87b8c; font-weight: 600;
+  margin-bottom: 8px;
+}
+.mdzen-pet-reconcile-item {
+  font-size: 12.5px; line-height: 1.5;
+  padding: 6px 0;
+  color: #666;
+}
+.mdzen-pet-reconcile-text {
+  text-decoration: line-through;
+  text-decoration-color: #c4a4af;
+  color: #998089;
+  margin-right: 6px;
+}
+.mdzen-pet-reconcile-reason {
+  display: block;
+  font-size: 11.5px;
+  color: #8c6c78;
+  font-style: italic;
+  margin-top: 2px;
+  padding-left: 4px;
+}
+.mdzen-pet-reconcile-when {
+  font-size: 10.5px; color: #b8a4ac;
+  margin-left: 4px;
+}
+
+/* Dream entry */
+.mdzen-pet-dream-entry {
+  background: #fafaf8;
+  border: 1px solid #ebe8e0;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.mdzen-pet-dream-time {
+  font-size: 11px; color: #aaa; margin-bottom: 8px;
+}
+.mdzen-pet-dream-q {
+  font-size: 12.5px; color: #6a4d62; font-style: italic;
+  margin: 4px 0;
+}
+.mdzen-pet-dream-i {
+  font-size: 13px; line-height: 1.55; color: #2c1820;
+  margin: 6px 0;
+  padding-left: 10px; border-left: 2px solid #d8b8c8;
+}
+.mdzen-pet-dream-cite {
+  font-size: 10px; color: #aaa; margin-left: 4px;
+}
 `;
   document.head.appendChild(style);
 }
 
+type Tab = 'chat' | 'acquired' | 'dreams';
+
 export async function showHistoryModal(sessionId: string): Promise<void> {
   ensureStylesheet();
   let messages = await loadHistory(sessionId);
+  let activeTab: Tab = 'chat';
 
   const overlay = document.createElement('div');
   overlay.className = 'mdzen-pet-history-overlay';
   const card = document.createElement('div');
   card.className = 'mdzen-pet-history-card';
 
+  // ─── Header ─────────────────────────────────────────────────
   const header = document.createElement('div');
   header.className = 'mdzen-pet-history-header';
   const title = document.createElement('div');
   title.className = 'mdzen-pet-history-title';
-  const updateTitle = (count: number): void => {
-    title.textContent = `聊天历史 · ${count} 条消息`;
+  const updateTitle = (): void => {
+    if (activeTab === 'chat') title.textContent = `聊天历史 · ${messages.length} 条消息`;
+    else if (activeTab === 'acquired') title.textContent = '她长成的样子';
+    else title.textContent = '她最近的梦';
   };
-  updateTitle(messages.length);
 
   const clearBtn = document.createElement('button');
   clearBtn.className = 'mdzen-pet-history-icon-btn danger';
@@ -240,19 +373,35 @@ export async function showHistoryModal(sessionId: string): Promise<void> {
   header.appendChild(clearBtn);
   header.appendChild(closeBtn);
 
+  // ─── Tabs ───────────────────────────────────────────────────
+  const tabs = document.createElement('div');
+  tabs.className = 'mdzen-pet-tabs';
+
+  const mkTab = (key: Tab, label: string): HTMLButtonElement => {
+    const b = document.createElement('button');
+    b.className = `mdzen-pet-tab${activeTab === key ? ' active' : ''}`;
+    b.textContent = label;
+    b.addEventListener('click', () => switchTab(key));
+    return b;
+  };
+  const tabChat = mkTab('chat', '聊天');
+  const tabAcq = mkTab('acquired', '她长成的样子');
+  const tabDream = mkTab('dreams', '她的梦');
+  tabs.appendChild(tabChat);
+  tabs.appendChild(tabAcq);
+  tabs.appendChild(tabDream);
+
+  // ─── Body ───────────────────────────────────────────────────
   const body = document.createElement('div');
   body.className = 'mdzen-pet-history-body';
 
-  const renderBody = (msgs: HistoryMessage[]): void => {
+  const renderChat = (): void => {
     body.innerHTML = '';
-    if (msgs.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'mdzen-pet-history-empty';
-      empty.textContent = '还没有聊过什么呢~';
-      body.appendChild(empty);
+    if (messages.length === 0) {
+      body.appendChild(emptyEl('还没有聊过什么呢~'));
       return;
     }
-    for (const m of msgs) {
+    for (const m of messages) {
       const row = document.createElement('div');
       row.className = `mdzen-pet-history-row ${m.role}`;
       const bubble = document.createElement('div');
@@ -272,9 +421,178 @@ export async function showHistoryModal(sessionId: string): Promise<void> {
     }
     body.scrollTop = body.scrollHeight;
   };
-  renderBody(messages);
+
+  const renderAcquired = async (): Promise<void> => {
+    body.innerHTML = '';
+    body.appendChild(emptyEl('加载中...'));
+    // Acquired + dreams loaded together — reconcile entries live in dream-log
+    // appliedOps and surface here as "她最近放下了" so the user sees the full
+    // arc (what stayed + what she let go).
+    const [acq, log] = await Promise.all([loadAcquired(), loadDreams()]);
+    body.innerHTML = '';
+    const recentReconciles = collectRecentReconciles(log);
+    if ((!acq || acq.traits.length === 0) && recentReconciles.length === 0) {
+      body.appendChild(emptyEl('她还没养出什么固定的小习惯'));
+      return;
+    }
+    if (acq && acq.traits.length > 0) {
+      const groups: Record<string, AcquiredTraitDTO[]> = {
+        habit: [],
+        preference: [],
+        relation_belief: [],
+      };
+      for (const t of acq.traits) groups[t.category]?.push(t);
+      const labels: Record<string, string> = {
+        habit: '习惯',
+        preference: '偏好',
+        relation_belief: '她对你的看法',
+      };
+      for (const cat of ['habit', 'preference', 'relation_belief']) {
+        const list = groups[cat]!;
+        if (list.length === 0) continue;
+        const section = document.createElement('div');
+        section.className = 'mdzen-pet-acq-section';
+        const t = document.createElement('div');
+        t.className = 'mdzen-pet-acq-title';
+        t.textContent = labels[cat]!;
+        section.appendChild(t);
+        const sorted = [...list].sort((a, b) => b.confidence - a.confidence);
+        for (const trait of sorted) {
+          const item = document.createElement('div');
+          item.className = 'mdzen-pet-acq-item';
+          const text = document.createElement('span');
+          text.textContent = trait.text;
+          const conf = document.createElement('span');
+          conf.className = 'mdzen-pet-acq-conf';
+          // No raw number — verbal label, MIT Petz principle.
+          conf.textContent =
+            trait.confidence < 0.55 ? '· 弱' : trait.confidence < 0.8 ? '· 中' : '· 强';
+          item.appendChild(text);
+          item.appendChild(conf);
+          section.appendChild(item);
+        }
+        body.appendChild(section);
+      }
+    }
+    if (recentReconciles.length > 0) {
+      const section = document.createElement('div');
+      section.className = 'mdzen-pet-reconcile-section';
+      const title = document.createElement('div');
+      title.className = 'mdzen-pet-reconcile-title';
+      title.textContent = '她最近放下了';
+      section.appendChild(title);
+      for (const r of recentReconciles) {
+        const item = document.createElement('div');
+        item.className = 'mdzen-pet-reconcile-item';
+        const head = document.createElement('span');
+        const text = document.createElement('span');
+        text.className = 'mdzen-pet-reconcile-text';
+        text.textContent = r.droppedText;
+        const when = document.createElement('span');
+        when.className = 'mdzen-pet-reconcile-when';
+        when.textContent = formatRelative(r.ts);
+        head.appendChild(text);
+        head.appendChild(when);
+        const reason = document.createElement('span');
+        reason.className = 'mdzen-pet-reconcile-reason';
+        reason.textContent = `因为: ${r.reason}`;
+        item.appendChild(head);
+        item.appendChild(reason);
+        section.appendChild(item);
+      }
+      body.appendChild(section);
+    }
+  };
+
+  // Pull reconcile_trait ops out of the dream log; newest first, capped at 10.
+  // Defensive against unknown op shapes (server may extend op types later).
+  function collectRecentReconciles(
+    log: DreamLogDTO | null,
+  ): { droppedText: string; reason: string; ts: number }[] {
+    if (!log) return [];
+    const out: { droppedText: string; reason: string; ts: number }[] = [];
+    for (const dream of log.recentDreams) {
+      for (const op of dream.appliedOps) {
+        if (!op || typeof op !== 'object') continue;
+        const o = op as { op?: string; droppedText?: string; reason?: string };
+        if (o.op !== 'reconcile_trait') continue;
+        if (typeof o.droppedText !== 'string' || !o.droppedText) continue;
+        if (typeof o.reason !== 'string' || !o.reason) continue;
+        out.push({ droppedText: o.droppedText, reason: o.reason, ts: dream.ts });
+      }
+    }
+    return out.sort((a, b) => b.ts - a.ts).slice(0, 10);
+  }
+
+  function formatRelative(ts: number): string {
+    const ageMs = Date.now() - ts;
+    const days = Math.floor(ageMs / 86_400_000);
+    if (days <= 0) return ' · 今天';
+    if (days === 1) return ' · 昨天';
+    if (days < 7) return ` · ${days} 天前`;
+    if (days < 30) return ` · ${Math.floor(days / 7)} 周前`;
+    return ` · ${Math.floor(days / 30)} 个月前`;
+  }
+
+  const renderDreams = async (): Promise<void> => {
+    body.innerHTML = '';
+    body.appendChild(emptyEl('加载中...'));
+    const log = await loadDreams();
+    body.innerHTML = '';
+    if (!log || log.recentDreams.length === 0) {
+      body.appendChild(emptyEl('她还没做过梦呢'));
+      return;
+    }
+    // Newest first
+    const dreams = [...log.recentDreams].reverse();
+    for (const d of dreams) {
+      const card = document.createElement('div');
+      card.className = 'mdzen-pet-dream-entry';
+      const time = document.createElement('div');
+      time.className = 'mdzen-pet-dream-time';
+      time.textContent = formatDateTime(d.ts);
+      card.appendChild(time);
+      for (const q of d.questions.slice(0, 3)) {
+        const ql = document.createElement('div');
+        ql.className = 'mdzen-pet-dream-q';
+        ql.textContent = `· ${q}`;
+        card.appendChild(ql);
+      }
+      for (const ins of d.insights.slice(0, 5)) {
+        const il = document.createElement('div');
+        il.className = 'mdzen-pet-dream-i';
+        const span = document.createElement('span');
+        span.textContent = ins.text;
+        il.appendChild(span);
+        if (ins.cited.length) {
+          const cite = document.createElement('span');
+          cite.className = 'mdzen-pet-dream-cite';
+          cite.textContent = ` (因为 ep ${ins.cited.join(', ')})`;
+          il.appendChild(cite);
+        }
+        card.appendChild(il);
+      }
+      body.appendChild(card);
+    }
+  };
+
+  const switchTab = (next: Tab): void => {
+    activeTab = next;
+    tabChat.classList.toggle('active', next === 'chat');
+    tabAcq.classList.toggle('active', next === 'acquired');
+    tabDream.classList.toggle('active', next === 'dreams');
+    clearBtn.style.display = next === 'chat' ? '' : 'none';
+    updateTitle();
+    if (next === 'chat') renderChat();
+    else if (next === 'acquired') void renderAcquired();
+    else void renderDreams();
+  };
+
+  updateTitle();
+  renderChat();
 
   card.appendChild(header);
+  card.appendChild(tabs);
   card.appendChild(body);
   overlay.appendChild(card);
   document.body.appendChild(overlay);
@@ -294,21 +612,53 @@ export async function showHistoryModal(sessionId: string): Promise<void> {
   clearBtn.addEventListener('click', () => {
     showConfirmClear(async (alsoMemory) => {
       try {
-        await fetch(`${PREFIX}/history?session=${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+        await fetch(`${getRoutePrefix()}/history?session=${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
         if (alsoMemory) {
-          await fetch(`${PREFIX}/memory`, { method: 'DELETE' });
+          await fetch(`${getRoutePrefix()}/memory`, { method: 'DELETE' });
         }
       } catch {}
       messages = [];
-      updateTitle(0);
-      renderBody(messages);
+      updateTitle();
+      renderChat();
     });
   });
 }
 
+function emptyEl(text: string): HTMLDivElement {
+  const e = document.createElement('div');
+  e.className = 'mdzen-pet-history-empty';
+  e.textContent = text;
+  return e;
+}
+
+async function loadAcquired(): Promise<AcquiredStateDTO | null> {
+  try {
+    const r = await fetch(`${getRoutePrefix()}/acquired`);
+    if (!r.ok) return null;
+    return (await r.json()) as AcquiredStateDTO;
+  } catch {
+    return null;
+  }
+}
+
+async function loadDreams(): Promise<DreamLogDTO | null> {
+  try {
+    const r = await fetch(`${getRoutePrefix()}/dreams`);
+    if (!r.ok) return null;
+    return (await r.json()) as DreamLogDTO;
+  } catch {
+    return null;
+  }
+}
+
+function formatDateTime(ts: number): string {
+  const d = new Date(ts);
+  return d.toLocaleString('zh-CN');
+}
+
 async function loadHistory(sessionId: string): Promise<HistoryMessage[]> {
   try {
-    const r = await fetch(`${PREFIX}/history?session=${encodeURIComponent(sessionId)}`);
+    const r = await fetch(`${getRoutePrefix()}/history?session=${encodeURIComponent(sessionId)}`);
     if (!r.ok) return [];
     return (await r.json()) as HistoryMessage[];
   } catch {
@@ -370,14 +720,6 @@ function showConfirmClear(onConfirm: (alsoMemory: boolean) => void): void {
   });
 }
 
-function stripThinkBlocks(s: string): string {
-  let out = s.replace(/<think>[\s\S]*?<\/think>/g, '');
-  const open = out.lastIndexOf('<think>');
-  if (open >= 0 && out.indexOf('</think>', open) < 0) {
-    out = out.slice(0, open);
-  }
-  return out.trim();
-}
 
 function formatTime(ts: number): string {
   const d = new Date(ts);

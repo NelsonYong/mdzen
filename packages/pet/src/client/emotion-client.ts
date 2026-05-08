@@ -8,7 +8,7 @@ export interface EmotionSnapshot {
   contextualPhraseAt?: number;
 }
 
-const PREFIX = '/api/pet';
+import { getRoutePrefix } from './route-config.ts';
 
 export class EmotionClient {
   private state: EmotionSnapshot = { affection: 60, mood: 50, lastUpdated: Date.now() };
@@ -16,14 +16,14 @@ export class EmotionClient {
 
   async refresh(): Promise<void> {
     try {
-      const r = await fetch(`${PREFIX}/state`);
+      const r = await fetch(`${getRoutePrefix()}/state`);
       if (!r.ok) return;
       this.state = (await r.json()) as EmotionSnapshot;
     } catch {}
   }
 
   emit(event: string): void {
-    void fetch(`${PREFIX}/event`, {
+    void fetch(`${getRoutePrefix()}/event`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ event }),

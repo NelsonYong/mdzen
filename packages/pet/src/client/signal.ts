@@ -1,3 +1,5 @@
+import { getRoutePrefix } from './route-config.ts';
+
 const PING_INTERVAL_MS = 30_000;
 
 export interface SignalPayload {
@@ -44,7 +46,7 @@ export class SignalReporter {
       lastActivityAgoSec: Math.floor((Date.now() - this.lastActivityAt) / 1000),
     };
     try {
-      await fetch('/api/pet/signal', {
+      await fetch(`${getRoutePrefix()}/signal`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload),

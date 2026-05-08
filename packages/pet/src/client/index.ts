@@ -1,4 +1,5 @@
 import { Sprite } from './sprite.ts';
+import { createAnimationRegistry, type AnimationDef } from '../shared/animations.ts';
 import { Loop } from './loop.ts';
 import { attachDrag } from './drag.ts';
 import { BubbleHost } from './bubble.ts';
@@ -25,10 +26,24 @@ import type { FsmState } from '../shared/types.ts';
 
 declare global {
   interface Window {
-    __mdzenPet?: { stop: () => void };
-    __MDZEN_PET_CONFIG__?: {
+    __seren?: {
+      stop: () => void;
+      /** Force a temporary animation from outside — id can be any registered animation. */
+      setReaction?: (animationId: string, durationMs?: number) => void;
+    };
+    __SEREN_CONFIG__?: {
       excludeSelectors?: string[];
       padding?: number;
+      /** Show the animated sprite. Default true. */
+      showSprite?: boolean;
+      /** Allow autonomous wandering. Default true. */
+      autonomousMotion?: boolean;
+      /** Let the LLM pick post-reply animation. Default true. */
+      llmActions?: boolean;
+      /** Override the route prefix the client uses (assets / sse / chat). Default '/api/pet'. */
+      routePrefix?: string;
+      /** Animation registry snapshot (server-built, mirrors core + user extras). */
+      animations?: Array<Omit<AnimationDef, 'category'> & { category?: string }>;
     };
   }
 }
@@ -44,16 +59,46 @@ function deriveCurrentDoc(): string | undefined {
 }
 
 function start(): void {
-  if (window.__mdzenPet) return;
+  if (window.__seren) return;
 
-  const sprite = new Sprite({ size: 72, zIndex: 9999, initialState: 'idle' });
+  const config = window.__SEREN_CONFIG__ ?? {};
+  const showSprite = config.showSprite !== false;
+  const autonomousMotion = config.autonomousMotion !== false;
+  const llmActions = config.llmActions !== false;
+  const routePrefix = (config.routePrefix ?? '/api/pet').replace(/\/$/, '');
+  const assetsBase = `${routePrefix}/assets/`;
+
+  // Build a client-side registry mirror so sprite.setAnimation can resolve
+  // both core ids and host-registered extension ids via assetUrl lookup.
+  const extras = (config.animations ?? [])
+    .filter((a) => a && a.id && a.assetUrl)
+    .filter((a) => a.category !== 'core')
+    .map((a) => ({
+      id: a.id,
+      assetUrl: a.assetUrl,
+      tags: a.tags ?? [],
+      defaultDurationMs: a.defaultDurationMs ?? 1500,
+    }));
+  const registry = createAnimationRegistry(extras);
+
+  const sprite = new Sprite({
+    size: 72,
+    zIndex: 9999,
+    initialState: 'idle',
+    visible: showSprite,
+    assetsBase,
+    registry,
+  });
   document.body.appendChild(sprite.el);
+  // Park the anchor at bottom-right when invisible so bubbles render in a sensible spot.
+  if (!showSprite) {
+    sprite.setPosition(window.innerWidth - 96, window.innerHeight - 96);
+  }
   const bubble = new BubbleHost(sprite.el);
   const speech = new PetSpeech(sprite, bubble);
 
   void globalEmotion.refresh();
 
-  const config = window.__MDZEN_PET_CONFIG__ ?? {};
   const excludeSelectors: string[] = config.excludeSelectors ?? [
     '.toc-sidebar',
     '.file-nav',
@@ -80,36 +125,44 @@ function start(): void {
     getViewport: () => ({ w: window.innerWidth, h: window.innerHeight }),
     getExcluded,
     padding,
+    disableAutonomous: !autonomousMotion,
   });
   loop.start();
 
-  const initialBound = computeBound({
-    viewport: { w: window.innerWidth, h: window.innerHeight },
-    excluded: getExcluded(),
-    padding,
-  });
-  peekOnLoad(sprite, loop, {
-    x: initialBound.x + initialBound.w * 0.9,
-    y: initialBound.y + initialBound.h * 0.9,
-  });
+  // Peek-on-load, mischief and dodge only make sense when the pet is visible.
+  if (showSprite) {
+    const initialBound = computeBound({
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+      excluded: getExcluded(),
+      padding,
+    });
+    peekOnLoad(sprite, loop, {
+      x: initialBound.x + initialBound.w * 0.9,
+      y: initialBound.y + initialBound.h * 0.9,
+    });
+  }
 
-  const mischief = attachMischief({
-    loop,
-    sprite,
-    getViewport: () => ({ w: window.innerWidth, h: window.innerHeight }),
-    getExcluded,
-    padding,
-  });
-  const dodge = attachDodgeClick(sprite, loop);
+  const mischief = showSprite
+    ? attachMischief({
+        loop,
+        sprite,
+        getViewport: () => ({ w: window.innerWidth, h: window.innerHeight }),
+        getExcluded,
+        padding,
+      })
+    : { destroy: () => undefined };
+  const dodge = showSprite
+    ? attachDodgeClick(sprite, loop)
+    : { destroy: () => undefined };
 
   let dragCount = 0;
-  let sessionId = sessionStorage.getItem('mdzen-pet-session');
+  let sessionId = sessionStorage.getItem('seren-session');
   if (!sessionId) {
     sessionId =
       typeof crypto.randomUUID === 'function'
         ? crypto.randomUUID()
         : `s${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    sessionStorage.setItem('mdzen-pet-session', sessionId);
+    sessionStorage.setItem('seren-session', sessionId);
   }
 
   const inputBar = new InputBar({
@@ -132,27 +185,40 @@ function start(): void {
   // dodge.attachDodgeClick already steals 15% of clicks (calls preventDefault);
   // when she dodges, this handler short-circuits.
   let lastReactionIdx = -1;
-  sprite.img.addEventListener('click', (e: MouseEvent) => {
-    if (e.defaultPrevented) return;
-    if (globalBusy.isBusy()) return;
-    globalEmotion.emit('click');
+  if (showSprite) {
+    sprite.img.addEventListener('click', (e: MouseEvent) => {
+      if (e.defaultPrevented) return;
+      if (globalBusy.isBusy()) return;
+      globalEmotion.emit('click');
 
-    let next: FsmState;
-    do {
-      next = CLICK_REACTIONS[Math.floor(Math.random() * CLICK_REACTIONS.length)] ?? 'waving';
-    } while (CLICK_REACTIONS.length > 1 && CLICK_REACTIONS.indexOf(next) === lastReactionIdx);
-    lastReactionIdx = CLICK_REACTIONS.indexOf(next);
-    sprite.setState(next);
-    setTimeout(() => sprite.setState('idle'), 1100);
+      let next: FsmState;
+      do {
+        next = CLICK_REACTIONS[Math.floor(Math.random() * CLICK_REACTIONS.length)] ?? 'waving';
+      } while (CLICK_REACTIONS.length > 1 && CLICK_REACTIONS.indexOf(next) === lastReactionIdx);
+      lastReactionIdx = CLICK_REACTIONS.indexOf(next);
+      sprite.setState(next);
+      setTimeout(() => sprite.setState('idle'), 1100);
 
-    if (!globalEmotion.isHiding()) inputBar.toggle();
-  });
+      if (!globalEmotion.isHiding()) inputBar.toggle();
+    });
+  } else {
+    // In headless mode the input bar is the only entry point — open it on startup
+    // and rebind a global Cmd/Ctrl-K shortcut so it stays reachable after Esc.
+    setTimeout(() => inputBar.toggle(), 600);
+    window.addEventListener('keydown', (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        inputBar.toggle();
+      }
+    });
+  }
 
   const reporter = new SignalReporter(sessionId, deriveCurrentDoc);
   reporter.start();
 
   const sse = new SseConsumer(sessionId, {
     onToken: (text) => speech.receiveToken(text),
+    onAck: ({ text, willing }) => speech.applyAck(text, willing),
     onFinal: () => speech.finalize(),
     onError: (message) => speech.fail(message),
     onProposeEdit: (payload) =>
@@ -166,6 +232,13 @@ function start(): void {
     onEditApplied: (payload) => {
       bubble.show({ text: `✓ 已写入 ${payload.path}`, variant: 'passive', durationMs: 4000 });
     },
+    onAction: ({ animationId, durationMs }) => {
+      // Server-side LLM-picked reaction. Registry-validated; unknown ids are no-ops.
+      if (!showSprite) return;
+      sprite.setAnimation(animationId);
+      const dur = durationMs > 0 ? durationMs : 1500;
+      setTimeout(() => sprite.setAnimation('idle'), dur);
+    },
   });
 
   const gate = new CooldownGate({ globalMs: 30_000 });
@@ -174,7 +247,8 @@ function start(): void {
   const idle = attachIdle(bubble, gate);
   const ceremonial = attachCeremonial(bubble, gate, sprite);
 
-  const drag = attachDrag({
+  const drag = showSprite
+    ? attachDrag({
     trigger: sprite.img,
     isBlocked: () => globalBusy.isBusy(),
     onDragStart: () => {
@@ -235,9 +309,19 @@ function start(): void {
         globalEmotion.emit('drag-1st');
       }
     },
-  });
+  })
+    : { destroy: () => undefined };
 
-  window.__mdzenPet = {
+  // Public host hook: drive any registered animation from outside (id can be core OR extension).
+  // No-ops when sprite is hidden — caller need not branch.
+  const setReaction = (next: string, durationMs = 1100): void => {
+    if (!showSprite) return;
+    sprite.setAnimation(next);
+    if (durationMs > 0) setTimeout(() => sprite.setAnimation('idle'), durationMs);
+  };
+
+  window.__seren = {
+    setReaction,
     stop: () => {
       reporter.stop();
       sse.destroy();
@@ -252,7 +336,7 @@ function start(): void {
       bubble.destroy();
       loop.stop();
       sprite.destroy();
-      window.__mdzenPet = undefined;
+      window.__seren = undefined;
     },
   };
 }

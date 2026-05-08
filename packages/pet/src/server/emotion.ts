@@ -4,6 +4,13 @@ export interface EmotionState {
   lastUpdated: number;
   contextualPhrase?: string;
   contextualPhraseAt?: number;
+  /**
+   * Set when the most recent chat turn was a mood-gated refusal. Cleared on
+   * the next willing reply. Drives the "patient follow-up" boost — if the
+   * user keeps engaging despite refusal, they get a per-turn affection bump
+   * roughly equal to a `sorry` event.
+   */
+  lastRefusalAt?: number;
 }
 
 export type AffectionZone = 'adored' | 'friendly' | 'sulky' | 'cold' | 'hiding';
@@ -53,6 +60,40 @@ export function applyEvent(s: EmotionState, ev: EmotionEvent, now: number): Emot
     lastUpdated: now,
     contextualPhrase: s.contextualPhrase,
     contextualPhraseAt: s.contextualPhraseAt,
+    lastRefusalAt: s.lastRefusalAt,
+  });
+}
+
+/** Time after a refusal during which a follow-up counts as patient (10 min). */
+export const PATIENT_FOLLOWUP_WINDOW_MS = 10 * 60_000;
+/** Below this, the follow-up looks spammy rather than patient — no boost. */
+export const PATIENT_FOLLOWUP_MIN_GAP_MS = 30_000;
+/** Bump applied on each patient follow-up turn. Roughly equals 'sorry'. */
+export const PATIENT_FOLLOWUP_DELTA: { affection: number; mood: number } = {
+  affection: 5,
+  mood: 7,
+};
+
+/**
+ * If the user is following up after a recent refusal (within 10 min, but at
+ * least 30s — so spam doesn't farm it), return a state with the boost applied
+ * and `lastRefusalAt` preserved (so subsequent retries can also boost). Else
+ * return the input unchanged.
+ *
+ * Pure — caller decides whether to persist.
+ */
+export function applyPatientFollowUp(s: EmotionState, now: number): EmotionState {
+  if (typeof s.lastRefusalAt !== 'number') return s;
+  const gap = now - s.lastRefusalAt;
+  if (gap < PATIENT_FOLLOWUP_MIN_GAP_MS) return s;
+  if (gap > PATIENT_FOLLOWUP_WINDOW_MS) return s;
+  return clampState({
+    affection: s.affection + PATIENT_FOLLOWUP_DELTA.affection,
+    mood: s.mood + PATIENT_FOLLOWUP_DELTA.mood,
+    lastUpdated: now,
+    contextualPhrase: s.contextualPhrase,
+    contextualPhraseAt: s.contextualPhraseAt,
+    lastRefusalAt: s.lastRefusalAt,
   });
 }
 
@@ -66,15 +107,20 @@ export function tickRecovery(s: EmotionState, now: number): EmotionState {
     lastUpdated: now,
     contextualPhrase: s.contextualPhrase,
     contextualPhraseAt: s.contextualPhraseAt,
+    lastRefusalAt: s.lastRefusalAt,
   });
 }
 
 function clampState(s: EmotionState): EmotionState {
-  return {
-    ...s,
+  const out: EmotionState = {
     affection: Math.max(0, Math.min(100, s.affection)),
     mood: Math.max(0, Math.min(100, s.mood)),
+    lastUpdated: s.lastUpdated,
   };
+  if (s.contextualPhrase !== undefined) out.contextualPhrase = s.contextualPhrase;
+  if (s.contextualPhraseAt !== undefined) out.contextualPhraseAt = s.contextualPhraseAt;
+  if (s.lastRefusalAt !== undefined) out.lastRefusalAt = s.lastRefusalAt;
+  return out;
 }
 
 export const PRESET_PHRASES: Readonly<Record<AffectionZone, string>> = {

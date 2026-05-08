@@ -1,14 +1,13 @@
-import { ChatOpenAI } from '@langchain/openai';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import type { EmotionState } from './emotion.ts';
-import type { PersonalityConfig } from '../shared/types.ts';
 import type { ChatMessage } from './storage.ts';
+import type { PetProfile } from './profile.ts';
+import { runTextExtractor } from './json-extractor.ts';
 
 export interface ContextualDeps {
   apiKey: string;
   baseURL?: string;
   model?: string;
-  personality: PersonalityConfig;
+  profile: PetProfile;
 }
 
 export async function generateContextualPhrase(
@@ -17,50 +16,29 @@ export async function generateContextualPhrase(
   recentMessages: ChatMessage[],
   currentDocTitle: string,
 ): Promise<string> {
-  const llm = new ChatOpenAI({
-    apiKey: deps.apiKey,
-    model: deps.model ?? 'gpt-4o-mini',
-    streaming: false,
-    maxTokens: 60,
-    configuration: deps.baseURL ? { baseURL: deps.baseURL } : undefined,
-  });
-
   const eventsTail = recentMessages
     .slice(-5)
     .map((m) => `${m.role}: ${m.content.slice(0, 80)}`)
     .join('\n');
 
-  const sys = new SystemMessage(
-    [
-      `根据下面信息, 用一句话(最多 25 字)描写她此刻的心境。`,
-      `视角: 第三人称, 像在看她, 不许用"我"。`,
-      ``,
-      `性格: ${deps.personality.baseTone}`,
-      `最近事件:`,
-      eventsTail || '(无)',
-      `当前文档: ${currentDocTitle || '(未知)'}`,
-      `affection: ${state.affection.toFixed(0)}  mood: ${state.mood.toFixed(0)}`,
-      ``,
-      `输出: 只一句话, 不要引号。`,
-    ].join('\n'),
+  const system = [
+    `根据下面信息, 用一句话(最多 25 字)描写她此刻的心境。`,
+    `视角: 第三人称, 像在看她, 不许用"我"。`,
+    ``,
+    `性格: ${deps.profile.tone}`,
+    `最近事件:`,
+    eventsTail || '(无)',
+    `当前文档: ${currentDocTitle || '(未知)'}`,
+    `affection: ${state.affection.toFixed(0)}  mood: ${state.mood.toFixed(0)}`,
+    ``,
+    `输出: 只一句话, 不要引号。`,
+  ].join('\n');
+
+  const text = await runTextExtractor(
+    { ...deps, maxTokens: 60 },
+    { system, user: '生成', maxLen: 60 },
   );
-
-  try {
-    const res = await llm.invoke([sys, new HumanMessage('生成')]);
-    const raw = ((res?.content as string | undefined) ?? '').trim();
-    return stripThinkBlocks(raw).slice(0, 60);
-  } catch {
-    return '';
-  }
-}
-
-function stripThinkBlocks(s: string): string {
-  let out = s.replace(/<think>[\s\S]*?<\/think>/g, '');
-  const open = out.lastIndexOf('<think>');
-  if (open >= 0 && out.indexOf('</think>', open) < 0) {
-    out = out.slice(0, open);
-  }
-  return out.trim();
+  return text ?? '';
 }
 
 export function shouldRegenerate(

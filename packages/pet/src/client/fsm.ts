@@ -6,13 +6,15 @@ export interface FsmTickInput {
 }
 
 const AUTONOMOUS_TABLE: ReadonlyArray<{ threshold: number; pick: (r: number) => FsmState }> = [
-  // Calmer than before — she stays still ~70% of ticks, walks rarely.
-  { threshold: 0.70, pick: () => 'idle' },
-  { threshold: 0.80, pick: (r) => (r < 0.75 ? 'walk-left' : 'walk-right') },
-  { threshold: 0.86, pick: () => 'wandering' },
-  { threshold: 0.92, pick: () => 'jumping' },
-  { threshold: 0.99, pick: () => 'waiting' },
-  { threshold: 1.00, pick: () => 'running' },
+  // Desktop-companion principle: persistently visible, behaviorally calm.
+  // Idle dominant (~75%); slow walks; the dramatic verbs (running, jumping)
+  // are reserved for explicit triggers (greet on return, mischief, click reaction)
+  // — they don't fire from the random tick.
+  { threshold: 0.75, pick: () => 'idle' },
+  { threshold: 0.85, pick: (r) => (r < 0.75 ? 'walk-left' : 'walk-right') },
+  { threshold: 0.91, pick: () => 'wandering' },
+  { threshold: 0.96, pick: () => 'jumping' },
+  { threshold: 1.00, pick: () => 'waiting' },
 ];
 
 export function rollAutonomousTransition(input: FsmTickInput): FsmState {

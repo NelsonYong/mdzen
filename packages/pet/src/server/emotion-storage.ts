@@ -1,39 +1,40 @@
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
-import { join } from 'node:path';
-import { createHash } from 'node:crypto';
 import type { EmotionState } from './emotion.ts';
 import { INITIAL_STATE } from './emotion.ts';
+import { createJsonStore, type JsonStore } from './json-store.ts';
 
 export interface EmotionStoreOptions {
-  chatDir: string;
-  workspaceRoot: string;
+  /** Directory where the relationship-scoped state file lives. */
+  dir: string;
 }
 
-export interface EmotionStore {
-  load(): Promise<EmotionState>;
-  save(s: EmotionState): Promise<void>;
-  filePath: string;
-}
+export type EmotionStore = JsonStore<EmotionState>;
 
 export function createEmotionStore(opts: EmotionStoreOptions): EmotionStore {
-  const hash = createHash('sha1').update(opts.workspaceRoot).digest('hex').slice(0, 12);
-  const dir = join(opts.chatDir, 'workspaces', hash);
-  const filePath = join(dir, 'pet-state.json');
-  return {
-    filePath,
-    async load() {
-      try {
-        const buf = await readFile(filePath, 'utf-8');
-        return JSON.parse(buf) as EmotionState;
-      } catch {
-        return INITIAL_STATE(Date.now());
+  return createJsonStore<EmotionState>({
+    dir: opts.dir,
+    file: 'emotion.json',
+    validate: (raw) => {
+      if (!raw || typeof raw !== 'object') return null;
+      const p = raw as Partial<EmotionState>;
+      // Per-field validation — a corrupted/older-shape file used to silently
+      // produce NaN affection downstream (tickRecovery → math on undefined).
+      if (
+        typeof p.affection !== 'number' ||
+        typeof p.mood !== 'number' ||
+        typeof p.lastUpdated !== 'number'
+      ) {
+        return null;
       }
+      const out: EmotionState = {
+        affection: p.affection,
+        mood: p.mood,
+        lastUpdated: p.lastUpdated,
+      };
+      if (typeof p.contextualPhrase === 'string') out.contextualPhrase = p.contextualPhrase;
+      if (typeof p.contextualPhraseAt === 'number') out.contextualPhraseAt = p.contextualPhraseAt;
+      if (typeof p.lastRefusalAt === 'number') out.lastRefusalAt = p.lastRefusalAt;
+      return out;
     },
-    async save(s) {
-      await mkdir(dir, { recursive: true });
-      const tmp = `${filePath}.${Date.now()}.${process.pid}.tmp`;
-      await writeFile(tmp, JSON.stringify(s, null, 2));
-      await rename(tmp, filePath);
-    },
-  };
+    empty: () => INITIAL_STATE(Date.now()),
+  });
 }

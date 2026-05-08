@@ -39,10 +39,10 @@ function ensureStylesheet(): void {
 }
 .mdzen-pet-bubble {
   display: inline-block;
-  padding: 8px 12px;
+  padding: 14px 18px;
   border-radius: 14px;
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.6;
   max-width: 320px;
   min-width: 32px;
   max-height: min(45vh, 360px);
@@ -63,7 +63,7 @@ function ensureStylesheet(): void {
 .mdzen-pet-bubble::-webkit-scrollbar-thumb {
   background: rgba(0,0,0,0.18); border-radius: 3px;
 }
-.mdzen-pet-bubble.has-expand { padding-right: 38px; }
+.mdzen-pet-bubble.has-expand { padding-right: 42px; }
 .mdzen-pet-bubble::before,
 .mdzen-pet-bubble::after {
   content: '';

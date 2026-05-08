@@ -14,6 +14,8 @@ export interface LoopOptions {
   getExcluded: () => Rect[];
   padding: number;
   rng?: () => number;
+  /** If true, skip autonomous FSM transitions. Explicit setState/target follow still work. */
+  disableAutonomous?: boolean;
 }
 
 export class Loop {
@@ -74,7 +76,7 @@ export class Loop {
 
   private tick(now: number, dt: number): void {
     if (this.frozen) return;
-    if (now >= this.nextTickAt) {
+    if (!this.opts.disableAutonomous && now >= this.nextTickAt) {
       this.nextTickAt = now + FSM_TICK_MS;
       const next = rollAutonomousTransition({ current: this.state, random: this.rng() });
       if (next !== this.state) this.enter(next, now);

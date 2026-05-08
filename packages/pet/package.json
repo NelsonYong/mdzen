@@ -1,7 +1,7 @@
 {
-  "name": "@mdzen/pet",
+  "name": "@seren/pet",
   "version": "0.0.1",
-  "description": "Reading companion pet for markdown viewers",
+  "description": "Seren — a desktop AI companion (现寄居于 markdown 试点)",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

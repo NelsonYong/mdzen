@@ -1,4 +1,4 @@
-const KEY = 'mdzen-pet-drag-log';
+const KEY = 'seren-drag-log';
 const WINDOW_MS = 5 * 60_000;
 
 interface DragEntry {

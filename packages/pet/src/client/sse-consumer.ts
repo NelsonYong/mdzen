@@ -1,5 +1,8 @@
+import { getRoutePrefix } from './route-config.ts';
+
 export interface SseHandlers {
   onToken?(text: string): void;
+  onAck?(payload: { text: string; willing: boolean }): void;
   onFinal?(): void;
   onError?(message: string): void;
   onProposeEdit?(payload: {
@@ -11,12 +14,13 @@ export interface SseHandlers {
   }): void;
   onEditApplied?(payload: { proposalId: string; path: string }): void;
   onToolEnd?(tool: string): void;
+  onAction?(payload: { animationId: string; durationMs: number }): void;
 }
 
 export class SseConsumer {
   private es: EventSource | null = null;
 
-  constructor(sessionId: string, handlers: SseHandlers, prefix = '/api/pet') {
+  constructor(sessionId: string, handlers: SseHandlers, prefix = getRoutePrefix()) {
     this.es = new EventSource(`${prefix}/sse?session=${encodeURIComponent(sessionId)}`);
     this.es.onmessage = (e: MessageEvent) => {
       try {
@@ -24,6 +28,12 @@ export class SseConsumer {
         switch (ev.type) {
           case 'token':
             handlers.onToken?.(ev.text);
+            break;
+          case 'ack':
+            handlers.onAck?.({
+              text: typeof ev.text === 'string' ? ev.text : '',
+              willing: ev.willing === true,
+            });
             break;
           case 'final':
             handlers.onFinal?.();
@@ -46,6 +56,12 @@ export class SseConsumer {
           case 'edit-applied':
             handlers.onEditApplied?.({ proposalId: ev.proposalId, path: ev.path });
             break;
+          case 'action':
+            handlers.onAction?.({
+              animationId: ev.animationId,
+              durationMs: typeof ev.durationMs === 'number' ? ev.durationMs : 1500,
+            });
+            break;
         }
       } catch {}
     };
@@ -61,7 +77,7 @@ export async function postChat(
   sessionId: string,
   text: string,
   context?: { currentDoc?: string },
-  prefix = '/api/pet',
+  prefix = getRoutePrefix(),
 ): Promise<{ status: number; data: unknown }> {
   const r = await fetch(`${prefix}/chat`, {
     method: 'POST',

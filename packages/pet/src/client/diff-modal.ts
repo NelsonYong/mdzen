@@ -1,3 +1,5 @@
+import { getRoutePrefix } from './route-config.ts';
+
 export interface DiffModalOptions {
   proposalId: string;
   path: string;
@@ -83,7 +85,7 @@ export function showDiffModal(opts: DiffModalOptions): void {
   apply.addEventListener('click', () => {
     apply.textContent = '应用中...';
     apply.disabled = true;
-    fetch('/api/pet/apply-edit', {
+    fetch(`${getRoutePrefix()}/apply-edit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ proposalId: opts.proposalId }),

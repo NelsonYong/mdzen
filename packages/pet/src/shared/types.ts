@@ -19,12 +19,12 @@ export interface Boundary {
   exclude?: string[];
 }
 
-export interface PersonalityConfig {
-  name: string;
-  pronoun: string;
-  baseTone: 'gentle-girlish' | 'cool-cat' | string;
-  emojiPolicy: 'none' | 'sparing' | 'liberal';
-  responseLength: 'short' | 'medium';
+/** Extension animation (host-provided). Core ids are reserved. */
+export interface AnimationExtension {
+  id: string;
+  assetUrl: string;
+  tags?: string[];
+  defaultDurationMs?: number;
 }
 
 export interface CreatePetOptions {
@@ -35,9 +35,27 @@ export interface CreatePetOptions {
     model?: string;
   };
   storage?: { chatDir?: string };
-  personality?: Partial<PersonalityConfig>;
   routePrefix?: string;
   boundary?: Boundary;
+  /** Inline soul text. Falls back to bundled default. */
+  soul?: string;
+  /** Path to a soul.md (legacy: body only, no metadata). */
+  soulPath?: string;
+  /** Path to a profile file (frontmatter .md or .json). Highest precedence. */
+  profilePath?: string;
+  /** Built-in preset name: 'lover' | 'pet' | 'friend' | 'sister'. Default 'lover'. */
+  preset?: string;
+  /** Extra animations available to the LLM action picker + manual setAnimation. */
+  extraAnimations?: AnimationExtension[];
+  /** Visual / behavior toggles for the embedded client. */
+  client?: {
+    /** Show the animated GIF sprite at all. Default: true. */
+    showSprite?: boolean;
+    /** Allow the FSM to autonomously walk/wander. Default: true. */
+    autonomousMotion?: boolean;
+    /** Let the LLM pick the post-reply animation. Default: true. */
+    llmActions?: boolean;
+  };
 }
 
 export interface Pet {

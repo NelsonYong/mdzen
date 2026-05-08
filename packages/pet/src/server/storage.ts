@@ -2,6 +2,15 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
+// Chat history per workspace+session.
+//
+// IMPORTANT: this is the only WORKSPACE-scoped store. All other long-lived state
+// (memory, emotion, presence, inner-thought, acquired, dream-log) lives in
+// `~/.seren/global/` because she has ONE relationship with the user across
+// every project. Conversations stay topic/scene-scoped, hence per-workspace
+// here. Don't store anything relationship-shaped (facts, mood, etc.) in this
+// store — that belongs to global.
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
@@ -13,6 +22,7 @@ export interface StorageOptions {
   workspaceRoot: string;
 }
 
+/** Chat history store. Workspace-scoped (per-folder), session-scoped within. */
 export interface Storage {
   workspaceDir: string;
   appendMessage(sessionId: string, msg: ChatMessage): Promise<void>;

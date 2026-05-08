@@ -19,9 +19,9 @@
   ],
   "scripts": {
     "start": "node --experimental-strip-types src/server.ts",
-    "build": "pnpm --filter @mdzen/pet build && tsc -p tsconfig.build.json",
+    "build": "pnpm --filter @seren/pet build && tsc -p tsconfig.build.json",
     "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
-    "typecheck": "tsc --noEmit && pnpm --filter @mdzen/pet typecheck",
+    "typecheck": "tsc --noEmit && pnpm --filter @seren/pet typecheck",
     "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
   },
   "keywords": [
@@ -44,7 +44,7 @@
   },
   "packageManager": "pnpm@10.12.4",
   "dependencies": {
-    "@mdzen/pet": "workspace:*",
+    "@seren/pet": "workspace:*",
     "highlight.js": "^11.11.1",
     "marked": "^17.0.4",
     "marked-highlight": "^2.2.3"
