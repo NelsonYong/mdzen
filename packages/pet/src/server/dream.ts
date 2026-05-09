@@ -417,7 +417,9 @@ async function reflectAndConsolidate(
   const parsed = await runJsonExtractor<DreamPlan>(deps, {
     system,
     user: '做梦',
-    maxTokens: 600,
+    // Dream output is the largest extractor JSON (questions + insights + 1-6 ops);
+    // double-budgeted vs other extractors to leave reasoning headroom.
+    maxTokens: 2048,
     validate: (raw) => (raw && typeof raw === 'object' ? (raw as DreamPlan) : null),
   });
   if (!parsed) return null;

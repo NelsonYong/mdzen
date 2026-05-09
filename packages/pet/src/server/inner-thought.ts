@@ -119,7 +119,7 @@ export async function maybeRefreshInnerThought(
     .join('\n');
 
   const text = await runTextExtractor(
-    { ...deps, maxTokens: 80 },
+    { ...deps, maxTokens: 1024 },
     { system, user: '输出', maxLen: 60 },
   );
   if (!text) return;

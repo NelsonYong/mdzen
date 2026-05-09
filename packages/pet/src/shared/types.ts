@@ -12,6 +12,30 @@ export type FsmState =
   | 'waving'
   | 'failed';
 
+/**
+ * High-level activity sitting on top of the FSM. The FSM is per-tick state
+ * (idle/walk/run/...); activity is the long-running plan ("she's exercising"
+ * for the next 4 min). Persisted to localStorage so reloads pick up where she
+ * left off — a desktop pet that forgets everything every refresh stops feeling
+ * alive.
+ */
+export type PetActivity =
+  | { kind: 'idle' }
+  /** She's walked off to the side and will stay there until `until`. */
+  | { kind: 'moved-aside'; until: number; target: { x: number; y: number } }
+  /** Free-running exercise — wandering / running cycles until `until`. */
+  | { kind: 'exercising'; until: number }
+  /** Fixed at `anchor`, no autonomous movement until `until`. */
+  | { kind: 'staying'; until: number; anchor: { x: number; y: number } };
+
+export type MoveCommandKind =
+  | 'move-aside'
+  | 'come-closer'
+  | 'exercise'
+  | 'stay'
+  /** Cancels any in-progress activity (exercise / moved-aside / staying) and returns to idle. */
+  | 'stop';
+
 export interface Boundary {
   selector?: string;
   rect?: { x: number; y: number; w: number; h: number };
@@ -55,6 +79,18 @@ export interface CreatePetOptions {
     autonomousMotion?: boolean;
     /** Let the LLM pick the post-reply animation. Default: true. */
     llmActions?: boolean;
+    /**
+     * What the page is rendering.
+     * - 'embedded' (default): full client — sprite + bubble + chat input + history modal.
+     *   This is the mdzen-host scenario.
+     * - 'sprite': only sprite + bubble + SSE token rendering. Used by the desktop main
+     *   window. Click on sprite asks the host (Tauri) to open the input window via IPC.
+     * - 'input': only the chat input bar. Used by the desktop input window.
+     *   POSTs to /chat — the sprite window receives the streamed reply via its SSE.
+     * - 'history': only the history modal as full-window content. Used by the desktop
+     *   history window.
+     */
+    mode?: 'embedded' | 'sprite' | 'input' | 'history';
   };
 }
 

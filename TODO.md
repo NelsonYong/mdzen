@@ -54,15 +54,52 @@
 - ~~scrollPosition + 当前小节标题~~ — **跳过**(场景耦合)
 - ~~selection 注入 chat prompt~~ — **跳过**(场景耦合,等 Tauri 时再做 OS 级)
 
-### M3 — Tauri 桌面化(3-4 周)
-- [ ] 透明无边框窗口,可拖、可点透
-- [ ] 系统托盘 + 右键菜单(显示 / 睡觉 / 设置)
-- [ ] sidecar localhost(server 包跑在 Tauri 里)
-- [ ] 存储路径不变(`~/.seren/global/...`)
-- [ ] 跨重启状态恢复("昨晚睡了"延续到今天)
-- [ ] 多显示器
-- [ ] 电量管理 / 专注模式不打扰
-- [ ] **依赖 §3 中的 PetAPI / PetTransport 抽象**(必须先做,否则 HTTP-route 解耦痛苦)
+### M3 — Tauri 桌面化
+
+**M3.1 dev-mode MVP** ✅ 2026-05-08(`packages/desktop/`, Tauri 2.11, **pet-only,mdzen 已解耦**)
+- [x] 2026-05-08 透明无边框 always-on-top 窗口(`tauri.conf.json` + `WebviewWindowBuilder`)
+- [x] 2026-05-08 拖动条:每次页面加载注入顶部 8px `data-tauri-drag-region` 透明 strip
+- [x] 2026-05-08 点透切换:tray 菜单 → `set_ignore_cursor_events`
+- [x] 2026-05-08 系统托盘 + 菜单(显示 / 隐藏 / 切换点透 / 让她睡觉 / 退出)
+- [x] 2026-05-08 "睡觉" = `POST /api/pet/dream` + 隐藏窗口
+- [x] 2026-05-08 **pet-only host** (`packages/desktop/host/server.ts`)— 极简 HTTP, 只挂 `@seren/pet`, 透明 body + `pet.scriptTag()`. 桌面端完全脱离 mdzen
+- [x] 2026-05-08 sidecar:Rust spawn `node --experimental-strip-types packages/desktop/host/server.ts`,parse stdout 抓端口,navigate webview
+- [x] 2026-05-08 单实例锁(`tauri-plugin-single-instance`,避免两个 pet 抢 `~/.seren/global/`)
+- [x] 2026-05-08 窗口位置/大小持久化 + 多显示器 clamp(`tauri-plugin-window-state`)
+- [x] 2026-05-08 存储路径不变(pet 仍写 `~/.seren/global/`,desktop 没动这块)
+- [x] 2026-05-08 配置全走 env(`OPENAI_API_KEY` / `SEREN_BASE_URL` / `SEREN_MODEL` / `SEREN_PRESET` / `SEREN_PROFILE_PATH` / `SEREN_WORKSPACE_ROOT`)
+- [x] 2026-05-08 退出干净杀 sidecar(`RunEvent::Exit` + host 自身 SIGTERM trap)
+- [x] 2026-05-08 **三窗口拆分(Codex 桌面宠物 + Claude Desktop 输入条形态)**:主窗口 sprite 180×200 整 body drag-region;input 520×96 由全局 `Cmd+Shift+K` 唤起;history 760×560 标准带边框。三窗口共享 `localStorage.seren-session-v1` 同会话。pet client 加 `mode: 'sprite' | 'input' | 'history' | 'embedded'` 分支
+- [x] 2026-05-08 **sprite 模式去掉边界 / 漫游 / 内部拖拽**:`autonomousMotion` 强制 false, 跳过 mischief / peek / dodge / attachDrag / 文档触发器, sprite pinned 到 viewport 中心 + resize 重新居中, 忽略 SSE move-command
+- [x] 2026-05-08 全局快捷键(`tauri-plugin-global-shortcut`)+ Tauri 自定义命令(`toggle_input_window` / `hide_input_window` / `show_history_window` / `hide_history_window`)+ 默认 capability
+- ~~PetAPI / PetTransport 抽象~~ — **不再阻塞**(sidecar 走 localhost HTTP, 不需要解耦)。如果以后要 Tauri 命令直连,再做 §3 那条。
+
+**M3.4-M3.7 范式 A (koi-pond pattern) — 实施过但回退** 2026-05-09
+基于 [crabnebula-dev/koi-pond](https://github.com/crabnebula-dev/koi-pond) 的官方 Tauri 2 桌面宠物示例,实施了全屏 click-through + Rust 鼠标监听方案。但**实测发现 Tauri 2 当前在透明 webview 上 `set_ignore_cursor_events` 有 bug**([Issue #11461](https://github.com/tauri-apps/tauri/issues/11461) Windows / [Issue #13070](https://github.com/tauri-apps/tauri/issues/13070) 跨平台):click-through 翻 OFF 后 webview 仍然收不到事件 → 精灵无法拖动 / 点击。**回退到小窗口 + setPosition 方案**。
+
+**M3.4 范式 B' — 小窗口 + setPosition 拖动** ✅ 2026-05-09(`packages/desktop/`)
+绕过 startDragging bug([#12042](https://github.com/tauri-apps/tauri/issues/12042))**和** click-through bug([#11461](https://github.com/tauri-apps/tauri/issues/11461))的稳妥方案:精灵窗口很小(180×200,刚好包住精灵),**JS 拖动直接调 Rust 的 `set_position()` 移动 OS 窗口**,完全不依赖 Tauri 那两个有 bug 的 API。
+- [x] 2026-05-09 主窗口 180×200 透明无边框 alwaysOnTop accept_first_mouse skip_taskbar,默认右下角(window-state 插件持久化位置)
+- [x] 2026-05-09 三件套 Tauri 命令 `begin_window_drag` / `drag_window_by(dx, dy)` / `end_window_drag`:Rust 端在 mousedown 时 snapshot `outer_position()`,后续 mousemove 用 JS 报的 `screenX/Y` delta 加到 origin,调 `set_position()`
+- [x] 2026-05-09 精灵 pin 在 webview 中心 + resize 重新居中(精灵不在 webview 内移动,移动的是 OS 窗口)
+- [x] 2026-05-09 click vs drag disambiguation(4px threshold,mouseup 无显著移动 → invoke `toggle_input_window`)
+- [x] 2026-05-09 删除 `mouse_watch.rs` + `device_query` 依赖 + `set_pet_bbox` / `set_click_through` 命令 + 精灵 webview 内位置 localStorage(全部不再需要)
+- [x] 2026-05-09 capability 改 `allow-set-position` + `allow-outer-position`,删 `allow-set-ignore-cursor-events`
+
+**M3.2 生产化**
+- [ ] sidecar 路径解析:dev 走 `CARGO_MANIFEST_DIR`, prod 走 `app.path().resource_dir()`
+- [ ] 把 `mdzen/dist/` + Node binary 作为 Tauri resource ship(`tauri.conf.json` `bundle.resources`)
+- [ ] CI 里跑 `tauri build`(macOS dmg / Windows msi / Linux deb)
+- [ ] 真正的图标设计(目前 `src-tauri/icons/*.png` 是从 `xilian-idle.gif` 抽的占位)
+- [ ] macOS 提交 App Store?(透明窗口靠 `macos-private-api`,Store 会拒 → 走 dmg 自分发)
+
+**M3.3 设置面板 + 工作流**
+- [ ] DOC_ROOT 选择(目前 sidecar `current_dir(workspace)` 写死)
+- [ ] LLM API key / model / baseURL 在 UI 里改(目前要改环境变量)
+- [ ] 全局快捷键自定义(目前 `Cmd+Shift+K` 写死)
+- [ ] 跨重启"她还记着昨晚"自检:emotion / presence / dream-log 已经持久化 — 需要做一遍端到端验证
+- [ ] 电量管理 / macOS Focus 模式 / 专注模式静默(`Do Not Disturb` 期间 proactive 噤声)
+- [ ] **floatingMode 透传到 agent.ts**:sprite 模式下 server 不再决策 movement(目前服务端还在算, 客户端忽略 — 偶发 narration 不一致)
 
 ### M4 — TTS(Tauri 之后)
 - [ ] 方案讨论(用户已说要听:ElevenLabs vs 国产 vs 端侧;台本化;流式分句;中断处理)

@@ -96,7 +96,7 @@ export async function maybeUpdateMemory(
   const parsed = await runJsonExtractor<MemoryPatch>(deps, {
     system,
     user: '更新记忆',
-    maxTokens: 320,
+    maxTokens: 1024,
     validate: (raw) => (raw && typeof raw === 'object' ? (raw as MemoryPatch) : null),
   });
   if (!parsed) return;

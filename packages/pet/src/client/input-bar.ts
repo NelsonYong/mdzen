@@ -4,6 +4,12 @@ export interface InputBarOptions {
   placeholder?: string;
   onSubmit: (text: string) => void;
   onOpenHistory: () => void;
+  /**
+   * Skip the document-level "click outside the bar closes it" handler.
+   * Used by the desktop input window where the bar is the window's only
+   * content — closing it would leave a useless empty window onscreen.
+   */
+  disableOutsideClickClose?: boolean;
 }
 
 export class InputBar {
@@ -95,10 +101,25 @@ export class InputBar {
     });
     this.send.addEventListener('click', () => this.submit());
 
-    document.addEventListener('mousedown', this.handleOutsideClick);
+    if (!opts.disableOutsideClickClose) {
+      document.addEventListener('mousedown', this.handleOutsideClick);
+    }
 
     this.unsubscribeBusy = globalBusy.onChange((busy) => this.applyBusy(busy));
     this.applyBusy(globalBusy.isBusy());
+  }
+
+  /** Programmatic focus into the text field. Idempotent. */
+  focusInput(): void {
+    if (this.input.disabled) return;
+    this.input.focus();
+    // Move cursor to end so user can keep typing if there's existing text.
+    const len = this.input.value.length;
+    try {
+      this.input.setSelectionRange(len, len);
+    } catch {
+      /* some input types don't support selectionRange */
+    }
   }
 
   private applyBusy(busy: boolean): void {
@@ -159,7 +180,9 @@ export class InputBar {
 
   destroy(): void {
     this.unsubscribeBusy();
-    document.removeEventListener('mousedown', this.handleOutsideClick);
+    if (!this.opts.disableOutsideClickClose) {
+      document.removeEventListener('mousedown', this.handleOutsideClick);
+    }
     this.root.remove();
   }
 }

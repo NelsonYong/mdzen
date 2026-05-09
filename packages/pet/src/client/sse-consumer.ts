@@ -1,4 +1,5 @@
 import { getRoutePrefix } from './route-config.ts';
+import type { PetActivity } from '../shared/types.ts';
 
 export interface SseHandlers {
   onToken?(text: string): void;
@@ -15,6 +16,10 @@ export interface SseHandlers {
   onEditApplied?(payload: { proposalId: string; path: string }): void;
   onToolEnd?(tool: string): void;
   onAction?(payload: { animationId: string; durationMs: number }): void;
+  onMoveCommand?(payload: {
+    kind: 'move-aside' | 'come-closer' | 'exercise' | 'stay' | 'stop';
+    durationSec?: number;
+  }): void;
 }
 
 export class SseConsumer {
@@ -62,6 +67,13 @@ export class SseConsumer {
               durationMs: typeof ev.durationMs === 'number' ? ev.durationMs : 1500,
             });
             break;
+          case 'move-command':
+            console.log('[seren sse] move-command received:', ev.kind, ev.durationSec);
+            handlers.onMoveCommand?.({
+              kind: ev.kind,
+              ...(typeof ev.durationSec === 'number' ? { durationSec: ev.durationSec } : {}),
+            });
+            break;
         }
       } catch {}
     };
@@ -76,7 +88,7 @@ export class SseConsumer {
 export async function postChat(
   sessionId: string,
   text: string,
-  context?: { currentDoc?: string },
+  context?: { currentDoc?: string; currentActivity?: PetActivity },
   prefix = getRoutePrefix(),
 ): Promise<{ status: number; data: unknown }> {
   const r = await fetch(`${prefix}/chat`, {

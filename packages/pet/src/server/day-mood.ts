@@ -122,7 +122,7 @@ export async function maybeRefreshDayMood(
     .join('\n');
 
   const text = await runTextExtractor(
-    { ...deps, maxTokens: 80 },
+    { ...deps, maxTokens: 1024 },
     { system, user: '生成', maxLen: 60 },
   );
   if (!text) return;

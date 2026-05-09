@@ -35,7 +35,7 @@ export async function generateContextualPhrase(
   ].join('\n');
 
   const text = await runTextExtractor(
-    { ...deps, maxTokens: 60 },
+    { ...deps, maxTokens: 1024 },
     { system, user: '生成', maxLen: 60 },
   );
   return text ?? '';

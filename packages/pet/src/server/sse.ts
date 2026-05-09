@@ -20,6 +20,12 @@ export type PetEvent =
   | { type: 'edit-applied'; sessionId: string; proposalId: string; path: string }
   | { type: 'final'; sessionId: string; messageId: string }
   | { type: 'action'; sessionId: string; animationId: string; durationMs: number }
+  | {
+      type: 'move-command';
+      sessionId: string;
+      kind: 'move-aside' | 'come-closer' | 'exercise' | 'stay' | 'stop';
+      durationSec?: number;
+    }
   | { type: 'error'; sessionId: string; message: string };
 
 export interface SseChannels {

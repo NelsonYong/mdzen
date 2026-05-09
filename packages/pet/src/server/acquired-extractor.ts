@@ -73,7 +73,7 @@ export async function maybeUpdateAcquired(
   const parsed = await runJsonExtractor<AcquiredPatch>(deps, {
     system,
     user: '更新成长层',
-    maxTokens: 240,
+    maxTokens: 1024,
     validate: (raw) =>
       raw && typeof raw === 'object' && Array.isArray((raw as AcquiredPatch).ops)
         ? (raw as AcquiredPatch)

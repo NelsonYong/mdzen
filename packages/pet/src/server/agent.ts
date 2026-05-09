@@ -40,6 +40,8 @@ import {
   maybeRefreshDayMood,
 } from './day-mood.ts';
 import { runMoodAck, fallbackMoodAck } from './mood-ack.ts';
+import { pickMovement } from './movement-picker.ts';
+import type { PetActivity, MoveCommandKind } from '../shared/types.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // System prompt assembly order — load-bearing, do not reorder casually.
@@ -93,12 +95,18 @@ export interface AgentDeps {
   dispatch: (event: PetEvent) => void;
 }
 
+export interface ChatContext {
+  currentDoc?: string;
+  /** Client-known pet activity, forwarded to movement-picker so 'stop' / 'rest' intents have meaning. */
+  currentActivity?: PetActivity;
+}
+
 export interface PetAgent {
   run(
     sessionId: string,
     history: ChatMessage[],
     userText: string,
-    context?: { currentDoc?: string },
+    context?: ChatContext,
   ): Promise<string>;
 }
 
@@ -184,7 +192,9 @@ export function createPetAgent(deps: AgentDeps): PetAgent {
 
         if (!ackResult.willing) {
           // Refusal stands as the whole reply. No main agent stream, no post-
-          // reply jobs — there's no actual answer to extract memory from.
+          // reply jobs — there's no actual answer to extract memory from. Note
+          // that movement intent is also suppressed here — refusal blocks
+          // everything she might do for the user, including moving aside.
           deps.dispatch({ type: 'final', sessionId, messageId: `${Date.now()}` });
           return ackResult.ack;
         }
@@ -265,21 +275,76 @@ export function createPetAgent(deps: AgentDeps): PetAgent {
         deps.dispatch({ type: 'error', sessionId, message });
         throw err;
       }
+      // Movement intent runs INLINE (not in post-reply) so we can append a
+      // narration suffix to `acc` before persisting. Without this, future
+      // turns load history that omits "she just started running" — she'd
+      // answer "你在干什么" with whatever the text said, not the truth.
+      let acceptedMovementNarration = '';
+      if (deps.emotionStore) {
+        try {
+          const emotionNow = tickRecovery(await deps.emotionStore.load(), Date.now());
+          const zoneNow = affectionZone(emotionNow.affection);
+          const memory = deps.memoryStore ? await deps.memoryStore.load() : null;
+          const acquired = deps.acquiredStore ? await deps.acquiredStore.load() : null;
+          const moveCmd = await pickMovement(
+            { apiKey: deps.apiKey, baseURL: deps.baseURL, model: deps.model },
+            {
+              profile,
+              zone: zoneNow,
+              affection: emotionNow.affection,
+              mood: emotionNow.mood,
+              activity: context?.currentActivity ?? { kind: 'idle' },
+              userText,
+              petReply: acc,
+              recentEpisodes: memory?.episodes.slice(-3) ?? [],
+              traits: acquired?.traits ?? [],
+              facts: memory?.facts ?? [],
+              innerThought: rhythm.innerThought,
+            },
+          );
+          if (moveCmd) {
+            console.log(
+              `[pet movement] dispatched: ${moveCmd.kind}${
+                moveCmd.durationSec ? ` ${moveCmd.durationSec}s` : ''
+              } | user="${userText.slice(0, 40)}" reply="${acc.slice(0, 40)}"`,
+            );
+            deps.dispatch({
+              type: 'move-command',
+              sessionId,
+              kind: moveCmd.kind,
+              ...(moveCmd.durationSec !== undefined ? { durationSec: moveCmd.durationSec } : {}),
+            });
+            acceptedMovementNarration = narrateMovement(moveCmd.kind, moveCmd.durationSec);
+          } else {
+            console.log(
+              `[pet movement] no command (returned null/none) | user="${userText.slice(0, 40)}" reply="${acc.slice(0, 40)}"`,
+            );
+          }
+        } catch (err) {
+          console.warn('[pet] movement picker failed:', err instanceof Error ? err.message : err);
+        }
+      }
+
       deps.dispatch({ type: 'final', sessionId, messageId: `${Date.now()}` });
 
-      // All post-reply work runs through one fan-out — fire-and-forget,
-      // observable, and never blocks `acc` return.
+      const persistedReply = acceptedMovementNarration
+        ? `${acc}\n${acceptedMovementNarration}`
+        : acc;
+
+      // All other post-reply work runs through one fan-out — fire-and-forget,
+      // observable, and never blocks return.
       dispatchPostReplyJobs(deps, profile, {
         sessionId,
         history,
         userText,
-        reply: acc,
+        reply: persistedReply,
         presence,
         rhythm,
         llmActions,
+        currentActivity: context?.currentActivity,
       });
 
-      return acc;
+      return persistedReply;
     },
   };
 }
@@ -306,7 +371,7 @@ export async function assembleSystemPrompt(
   profile: PetProfile,
   baseSystemPrompt: string,
   history: ChatMessage[],
-  context: { currentDoc?: string } | undefined,
+  context: ChatContext | undefined,
   now: number,
 ): Promise<PromptAssemblyResult> {
   let systemPrompt = baseSystemPrompt;
@@ -340,6 +405,15 @@ export async function assembleSystemPrompt(
   const dayMood = deps.dayMoodStore ? await currentDayMood(deps.dayMoodStore, now) : null;
   if (dayMood) {
     systemPrompt = `${systemPrompt}\n【今天她的状态】${dayMood}`;
+  }
+
+  // 4c. current activity — what she's actually doing right now (running, away,
+  // staying, etc). Without this she'd answer "你在干什么" with whatever the
+  // text history says rather than the truth (she might be physically running).
+  // Pulled from client-supplied currentActivity in chat context.
+  const activityLine = describeCurrentActivity(context?.currentActivity, now);
+  if (activityLine) {
+    systemPrompt = `${systemPrompt}\n【你此刻正在做的事】${activityLine}`;
   }
 
   // 5. acquired layer (filtered by confidence)
@@ -405,6 +479,57 @@ export async function assembleSystemPrompt(
   return { systemPrompt, presence, rhythm, zonePhrase };
 }
 
+/**
+ * Render an activity for prompt injection. Includes the remaining time so
+ * she can naturally say "我刚跑了一会儿, 还能再跑两分钟". Returns '' for
+ * idle / undefined / past-expiry.
+ */
+/**
+ * Render a tiny stage-direction style narration that gets appended to the
+ * persisted assistant message when she accepts a movement command. Future
+ * turns load this in chat history, so she has a paper trail of "I just
+ * agreed to run". Format: `*(她转身跑了出去)*` — italicized so the history
+ * modal can style it differently from speech.
+ */
+function narrateMovement(kind: MoveCommandKind, durationSec?: number): string {
+  const minutes = durationSec && durationSec > 0 ? Math.max(1, Math.round(durationSec / 60)) : 0;
+  const minStr = minutes > 0 ? `, 大约 ${minutes} 分钟` : '';
+  switch (kind) {
+    case 'exercise':
+      return `*(她转身跑了出去${minStr})*`;
+    case 'move-aside':
+      return `*(她让到了屏幕一边${minStr})*`;
+    case 'come-closer':
+      return `*(她蹭了过来)*`;
+    case 'stay':
+      return `*(她站住了, 不再到处走${minStr})*`;
+    case 'stop':
+      return `*(她停了下来)*`;
+  }
+}
+
+function describeCurrentActivity(
+  a: PetActivity | undefined,
+  now: number,
+): string {
+  if (!a || a.kind === 'idle') return '';
+  if ('until' in a && a.until <= now) return '';
+  switch (a.kind) {
+    case 'moved-aside': {
+      const remaining = Math.max(0, Math.round((a.until - now) / 60_000));
+      return `已经走到屏幕一边避开他视野了, 大约还会在那边待 ${remaining} 分钟.`;
+    }
+    case 'exercising': {
+      const remaining = Math.max(0, Math.round((a.until - now) / 60_000));
+      return `正在跑动 / 锻炼中, 大约还会再跑 ${remaining} 分钟.`;
+    }
+    case 'staying': {
+      const remaining = Math.max(0, Math.round((a.until - now) / 60_000));
+      return `被他要求站在原地不动, 大约还要再站 ${remaining} 分钟.`;
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Post-reply fan-out — all the fire-and-forget work that happens AFTER
 // the agent stream finalizes. Observable: every job logs failures via
@@ -419,6 +544,7 @@ interface PostReplyJobsCtx {
   presence: Presence | null;
   rhythm: RhythmSnapshot;
   llmActions: boolean;
+  currentActivity: PetActivity | undefined;
 }
 
 function dispatchPostReplyJobs(
@@ -426,20 +552,25 @@ function dispatchPostReplyJobs(
   profile: PetProfile,
   ctx: PostReplyJobsCtx,
 ): void {
-  const { sessionId, history, userText, reply, presence, rhythm, llmActions } = ctx;
+  const { sessionId, history, userText, reply, presence, rhythm, llmActions, currentActivity } =
+    ctx;
   const fullHistory: ChatMessage[] = [
     ...history,
     { role: 'user', content: userText, timestamp: Date.now() },
     { role: 'assistant', content: reply, timestamp: Date.now() },
   ];
 
-  // Action picker: animation by zone + rhythm.
+  // (movement picker now runs inline in agent.run — see note there.)
+
+  // Action picker: animation by zone + rhythm + memory + traits.
   if (llmActions) {
     void (async () => {
       try {
         const zoneNow = deps.emotionStore
           ? affectionZone(tickRecovery(await deps.emotionStore.load(), Date.now()).affection)
           : 'friendly';
+        const memory = deps.memoryStore ? await deps.memoryStore.load() : null;
+        const acquired = deps.acquiredStore ? await deps.acquiredStore.load() : null;
         const picked = await pickAction(
           {
             apiKey: deps.apiKey,
@@ -448,7 +579,14 @@ function dispatchPostReplyJobs(
             registry: deps.animations,
             profile,
           },
-          { userText, petReply: reply, zone: zoneNow, rhythm: computeRhythm(new Date()) },
+          {
+            userText,
+            petReply: reply,
+            zone: zoneNow,
+            rhythm: computeRhythm(new Date()),
+            ...(memory ? { recentEpisodes: memory.episodes.slice(-3) } : {}),
+            ...(acquired ? { traits: acquired.traits } : {}),
+          },
         );
         if (picked.id !== 'idle' || picked.durationMs !== 0) {
           deps.dispatch({

@@ -231,7 +231,7 @@ async function askShouldSpeak(
   const parsed = await runJsonExtractor<{ speak?: boolean; text?: string }>(deps, {
     system,
     user: '决定',
-    maxTokens: 120,
+    maxTokens: 1024,
     validate: (raw) =>
       raw && typeof raw === 'object' ? (raw as { speak?: boolean; text?: string }) : null,
   });

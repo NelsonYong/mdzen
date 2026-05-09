@@ -1,6 +1,6 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
-import { stripThinkBlocks } from '../shared/strip-think.ts';
+import { stripThinkBlocks, stripCodeFences, extractJsonBlob } from '../shared/strip-think.ts';
 
 // Generic JSON extractor — wraps the "build ChatOpenAI → invoke → strip-think →
 // JSON.parse → validate" skeleton that was duplicated in six places
@@ -24,7 +24,12 @@ export interface JsonExtractorDeps {
   apiKey: string;
   baseURL?: string;
   model?: string;
-  /** Token budget for the LLM response. Default 320. */
+  /**
+   * Token budget for the LLM response. Default 1024 — sized to leave room
+   * for reasoning-model `<think>` blocks (R1 / QwQ) that can easily eat
+   * 200-800 tokens before any visible content. Smaller budget left
+   * post-strip output empty 100% of the time on those models.
+   */
   maxTokens?: number;
 }
 
@@ -34,13 +39,18 @@ export interface JsonExtractorOptions<T> {
   user?: string;
   /** Validate parsed JSON; return T or null. Failure (return null) → null. */
   validate: (parsed: unknown) => T | null;
-  /** Hard timeout in ms. Default 8000. */
+  /**
+   * Hard timeout in ms. Default 30s — reasoning models can take 10-25s
+   * for a small JSON output once you include their think pass. 5-8s
+   * timed out on every call.
+   */
   timeoutMs?: number;
   /** Per-call token budget override (else falls back to deps.maxTokens). */
   maxTokens?: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 8000;
+const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_MAX_TOKENS = 1024;
 
 export async function runJsonExtractor<T>(
   deps: JsonExtractorDeps,
@@ -50,7 +60,7 @@ export async function runJsonExtractor<T>(
     apiKey: deps.apiKey,
     model: deps.model ?? 'gpt-4o-mini',
     streaming: false,
-    maxTokens: opts.maxTokens ?? deps.maxTokens ?? 320,
+    maxTokens: opts.maxTokens ?? deps.maxTokens ?? DEFAULT_MAX_TOKENS,
     configuration: deps.baseURL ? { baseURL: deps.baseURL } : undefined,
   });
 
@@ -58,18 +68,63 @@ export async function runJsonExtractor<T>(
   const usr = new HumanMessage(opts.user ?? '请输出');
 
   const work = (async (): Promise<T | null> => {
+    let preStrip = '';
+    let raw = '';
     try {
       const res = await llm.invoke([sys, usr]);
-      const raw = stripThinkBlocks(((res?.content as string | undefined) ?? '').trim());
-      const parsed = JSON.parse(raw) as unknown;
-      return opts.validate(parsed);
-    } catch {
+      preStrip = ((res?.content as string | undefined) ?? '').trim();
+      raw = stripThinkBlocks(preStrip);
+    } catch (err) {
+      console.warn(
+        '[pet json-extractor] LLM invoke failed:',
+        err instanceof Error ? err.message : err,
+      );
       return null;
     }
+    if (!raw) {
+      // Distinguish "model gave nothing" from "model gave only a <think> block
+      // that strip-think then cut" — the second is actionable (raise maxTokens).
+      const preview = preStrip.slice(0, 200).replace(/\s+/g, ' ');
+      const allThink = preStrip.includes('<think>') && !preStrip.includes('</think>');
+      console.warn(
+        `[pet json-extractor] empty after strip${allThink ? ' (unclosed <think>; raise maxTokens)' : ''}; pre-strip head:`,
+        preview || '(truly empty)',
+      );
+      return null;
+    }
+    // Multi-strategy parse: many models wrap JSON in ```fences``` despite the
+    // prompt asking otherwise; some prepend "好的, 这是结果:" prose. Try in
+    // order of likelihood.
+    const candidates: string[] = [];
+    candidates.push(raw);
+    const fenced = stripCodeFences(raw);
+    if (fenced !== raw) candidates.push(fenced);
+    const extracted = extractJsonBlob(fenced !== raw ? fenced : raw);
+    if (extracted) candidates.push(extracted);
+
+    for (const c of candidates) {
+      try {
+        const parsed = JSON.parse(c) as unknown;
+        const v = opts.validate(parsed);
+        if (v !== null) return v;
+      } catch {
+        /* try next */
+      }
+    }
+    console.warn(
+      '[pet json-extractor] could not parse LLM JSON; raw head:',
+      raw.slice(0, 120).replace(/\s+/g, ' '),
+    );
+    return null;
   })();
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const timeout = new Promise<T | null>((r) => setTimeout(() => r(null), timeoutMs));
+  const timeout = new Promise<T | null>((r) =>
+    setTimeout(() => {
+      console.warn(`[pet json-extractor] timeout after ${timeoutMs}ms`);
+      r(null);
+    }, timeoutMs),
+  );
   return Promise.race([work, timeout]);
 }
 
@@ -85,7 +140,7 @@ export async function runTextExtractor(
     apiKey: deps.apiKey,
     model: deps.model ?? 'gpt-4o-mini',
     streaming: false,
-    maxTokens: deps.maxTokens ?? 80,
+    maxTokens: deps.maxTokens ?? DEFAULT_MAX_TOKENS,
     configuration: deps.baseURL ? { baseURL: deps.baseURL } : undefined,
   });
 
@@ -93,18 +148,36 @@ export async function runTextExtractor(
   const usr = new HumanMessage(opts.user ?? '请输出');
 
   const work = (async (): Promise<string | null> => {
+    let preStrip = '';
     try {
       const res = await llm.invoke([sys, usr]);
-      const raw = stripThinkBlocks(((res?.content as string | undefined) ?? '').trim());
-      const cleaned = raw.replace(/^["'「『]+|["'」』]+$/g, '').trim();
-      if (!cleaned) return null;
-      return opts.maxLen ? cleaned.slice(0, opts.maxLen) : cleaned;
-    } catch {
+      preStrip = ((res?.content as string | undefined) ?? '').trim();
+    } catch (err) {
+      console.warn(
+        '[pet text-extractor] LLM invoke failed:',
+        err instanceof Error ? err.message : err,
+      );
       return null;
     }
+    const raw = stripThinkBlocks(preStrip);
+    const cleaned = raw.replace(/^["'「『]+|["'」』]+$/g, '').trim();
+    if (!cleaned) {
+      const allThink = preStrip.includes('<think>') && !preStrip.includes('</think>');
+      console.warn(
+        `[pet text-extractor] empty after strip${allThink ? ' (unclosed <think>; raise maxTokens)' : ''}; pre-strip head:`,
+        preStrip.slice(0, 200).replace(/\s+/g, ' ') || '(truly empty)',
+      );
+      return null;
+    }
+    return opts.maxLen ? cleaned.slice(0, opts.maxLen) : cleaned;
   })();
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const timeout = new Promise<string | null>((r) => setTimeout(() => r(null), timeoutMs));
+  const timeout = new Promise<string | null>((r) =>
+    setTimeout(() => {
+      console.warn(`[pet text-extractor] timeout after ${timeoutMs}ms`);
+      r(null);
+    }, timeoutMs),
+  );
   return Promise.race([work, timeout]);
 }

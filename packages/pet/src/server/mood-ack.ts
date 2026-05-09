@@ -75,8 +75,10 @@ export async function runMoodAck(
   return await runJsonExtractor<MoodAckResult>(deps, {
     system,
     user: '决定',
-    maxTokens: 100,
-    timeoutMs: 6000,
+    // Reasoning models (R1/QwQ) easily burn 400-800 tokens in <think> before
+    // emitting the 30-char ack. Sized accordingly; truly tiny ack is fine,
+    // we just need the budget for the think pass.
+    maxTokens: 1024,
     validate: (raw) => {
       if (!raw || typeof raw !== 'object') return null;
       const p = raw as Partial<MoodAckResult>;

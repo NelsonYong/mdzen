@@ -23,6 +23,7 @@ import { createDreamLogStore, type DreamLogStore } from './dream-log.ts';
 import { runDream } from './dream.ts';
 import { createDayMoodStore, type DayMoodStore } from './day-mood.ts';
 import { migrateLegacyWorkspaceData } from './migrate.ts';
+import type { PetActivity } from '../shared/types.ts';
 
 const HERE_FILE = fileURLToPath(import.meta.url);
 const PKG_ROOT = resolve(dirname(HERE_FILE), '../..');
@@ -56,6 +57,7 @@ interface RuntimeState {
     showSprite: boolean;
     autonomousMotion: boolean;
     llmActions: boolean;
+    mode: 'embedded' | 'sprite' | 'input' | 'history';
     routePrefix: string;
     animations: Array<{ id: string; assetUrl: string; tags: string[]; defaultDurationMs: number; category: string }>;
   };
@@ -184,6 +186,7 @@ export function buildPet(opts: CreatePetOptions): Pet {
       showSprite: opts.client?.showSprite ?? true,
       autonomousMotion: opts.client?.autonomousMotion ?? true,
       llmActions: opts.client?.llmActions !== false,
+      mode: opts.client?.mode ?? 'embedded',
       routePrefix: prefix,
       // Snapshot the registry contents for the client to mirror.
       animations: animations.list().map((a) => ({
@@ -364,11 +367,17 @@ async function handleChat(state: RuntimeState, req: IncomingMessage, res: Server
   }
 
   const body = (await readJson(req)) as
-    | { sessionId?: unknown; text?: unknown; currentDoc?: unknown }
+    | {
+        sessionId?: unknown;
+        text?: unknown;
+        currentDoc?: unknown;
+        currentActivity?: unknown;
+      }
     | null;
   const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : '';
   const text = typeof body?.text === 'string' ? body.text : '';
   const currentDoc = typeof body?.currentDoc === 'string' ? body.currentDoc : undefined;
+  const currentActivity = parseActivity(body?.currentActivity);
   if (!sessionId || !text) {
     res.statusCode = 400;
     res.end();
@@ -387,7 +396,10 @@ async function handleChat(state: RuntimeState, req: IncomingMessage, res: Server
     try {
       const history = await storage.loadHistory(sessionId);
       const past = history.slice(0, Math.max(0, history.length - 1));
-      const reply = await agent.run(sessionId, past, text, currentDoc ? { currentDoc } : undefined);
+      const reply = await agent.run(sessionId, past, text, {
+        ...(currentDoc ? { currentDoc } : {}),
+        ...(currentActivity ? { currentActivity } : {}),
+      });
       await storage.appendMessage(sessionId, { role: 'assistant', content: reply, timestamp: Date.now() });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -587,6 +599,43 @@ async function handleApplyEdit(state: RuntimeState, req: IncomingMessage, res: S
   res.statusCode = 200;
   res.setHeader('content-type', 'application/json; charset=utf-8');
   res.end(JSON.stringify({ ok: true }));
+}
+
+/**
+ * Best-effort coerce a client-sent currentActivity blob into a typed
+ * PetActivity. Untrusted input — we only accept known shapes; everything
+ * else degrades to undefined (caller substitutes idle).
+ */
+function parseActivity(raw: unknown): PetActivity | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const a = raw as { kind?: unknown; until?: unknown; target?: unknown; anchor?: unknown };
+  if (a.kind === 'idle') return { kind: 'idle' };
+  if (
+    a.kind === 'moved-aside' &&
+    typeof a.until === 'number' &&
+    a.target &&
+    typeof a.target === 'object'
+  ) {
+    const t = a.target as { x?: unknown; y?: unknown };
+    if (typeof t.x === 'number' && typeof t.y === 'number') {
+      return { kind: 'moved-aside', until: a.until, target: { x: t.x, y: t.y } };
+    }
+  }
+  if (a.kind === 'exercising' && typeof a.until === 'number') {
+    return { kind: 'exercising', until: a.until };
+  }
+  if (
+    a.kind === 'staying' &&
+    typeof a.until === 'number' &&
+    a.anchor &&
+    typeof a.anchor === 'object'
+  ) {
+    const an = a.anchor as { x?: unknown; y?: unknown };
+    if (typeof an.x === 'number' && typeof an.y === 'number') {
+      return { kind: 'staying', until: a.until, anchor: { x: an.x, y: an.y } };
+    }
+  }
+  return undefined;
 }
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown> | null> {

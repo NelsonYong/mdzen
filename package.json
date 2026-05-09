@@ -22,6 +22,9 @@
     "build": "pnpm --filter @seren/pet build && tsc -p tsconfig.build.json",
     "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
     "typecheck": "tsc --noEmit && pnpm --filter @seren/pet typecheck",
+    "desktop:dev": "pnpm --filter @seren/desktop run dev",
+    "desktop:build": "pnpm --filter @seren/desktop run build",
+    "desktop:test": "cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml",
     "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
   },
   "keywords": [

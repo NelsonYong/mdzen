@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Seren</title>
+    <style>
+      :root { color-scheme: dark; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100vw;
+        height: 100vh;
+        background: transparent;
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: #d8d8d8;
+        overflow: hidden;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .loader {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: rgba(20, 20, 28, 0.6);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        border-radius: 14px;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #c8b3e6;
+        opacity: 0.4;
+        animation: pulse 1.4s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { transform: scale(0.6); opacity: 0.3; }
+        50%      { transform: scale(1);   opacity: 0.9; }
+      }
+      .hint { font-size: 12px; color: #9c9caa; }
+      .err  { color: #ff8a8a; max-width: 80%; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div class="loader" id="loader">
+      <div class="dot"></div>
+      <div class="hint" id="hint">希莲正在醒来…</div>
+    </div>
+    <script>
+      // The Rust side will navigate this webview to http://127.0.0.1:PORT/
+      // once the Node sidecar reports it's ready. This page is just the
+      // placeholder until that happens. If we don't navigate within ~12s,
+      // surface the failure so the user knows to look at logs.
+      const hint = document.getElementById('hint');
+      let elapsed = 0;
+      const tick = setInterval(() => {
+        elapsed += 1;
+        if (elapsed === 4) hint.textContent = '正在启动本地服务…';
+        if (elapsed === 8) hint.textContent = '还没就绪, 再等一会…';
+        if (elapsed === 12) {
+          hint.classList.add('err');
+          hint.textContent = '启动超时. 终端日志看看 sidecar 报了什么错.';
+          clearInterval(tick);
+        }
+      }, 1000);
+    </script>
+  </body>
+</html>
