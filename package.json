@@ -19,12 +19,9 @@
   ],
   "scripts": {
     "start": "node --experimental-strip-types src/server.ts",
-    "build": "pnpm --filter @seren/pet build && tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json",
     "test": "node --experimental-strip-types --test 'src/**/*.test.ts'",
-    "typecheck": "tsc --noEmit && pnpm --filter @seren/pet typecheck",
-    "desktop:dev": "pnpm --filter @seren/desktop run dev",
-    "desktop:build": "pnpm --filter @seren/desktop run build",
-    "desktop:test": "cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml",
+    "typecheck": "tsc --noEmit",
     "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
   },
   "keywords": [
@@ -47,7 +44,6 @@
   },
   "packageManager": "pnpm@10.12.4",
   "dependencies": {
-    "@seren/pet": "workspace:*",
     "highlight.js": "^11.11.1",
     "marked": "^17.0.4",
     "marked-highlight": "^2.2.3"
@@ -55,10 +51,5 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.9.3"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }

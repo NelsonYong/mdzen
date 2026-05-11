@@ -1,8 +1,0 @@
-# Tauri build output
-target/
-
-# Auto-generated capability/permission schemas (regenerated on every build)
-gen/schemas/
-
-# Tauri-bundled output
-WixTools/

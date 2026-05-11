@@ -2,14 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is a **pnpm workspaces monorepo** with two packages of interest:
-
-- **`mdzen`** (root) — Local Markdown preview server. The original product. Documented below.
-- **`@seren/pet`** (`packages/pet/`) — A desktop AI companion (default character: 希莲 / Xilian). Currently embedded in mdzen as a pilot; will move to Tauri.
-
-For pet/companion work, read [`packages/pet/ARCHITECTURE.md`](./packages/pet/ARCHITECTURE.md) first. It documents the 5-time-scale memory architecture, system-prompt assembly order, global vs workspace storage split, dream consolidation, and the cooldown ladder. The pet package has its own commands and tests (`pnpm --filter @seren/pet test`).
-
-The active roadmap and tech-debt log live in [`TODO.md`](./TODO.md) at repo root.
+`mdzen` — local Markdown preview server. Single-package repo; the AI-companion pilot (`@seren/pet`) that previously embedded here has been extracted into a separate monorepo at `~/webCode/seren/`.
 
 ## Commands
 
